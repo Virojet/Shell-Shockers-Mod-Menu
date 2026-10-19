@@ -8,7 +8,7 @@
 
 [![Install Mod Menu](https://img.shields.io/badge/Install_Mod_Menu-one_click-2ea44f?style=for-the-badge&logo=tampermonkey&logoColor=white)](https://raw.githubusercontent.com/Virojet/Shell-Shockers-Mod-Menu/main/Shell-Shockers-Mod-Menu.user.js)
 
-[![Version](https://img.shields.io/badge/version-1.2.0-0E7697?style=flat-square)](./Shell-Shockers-Mod-Menu.user.js)
+[![Version](https://img.shields.io/badge/version-1.3.0-0E7697?style=flat-square)](./Shell-Shockers-Mod-Menu.user.js)
 [![License: MIT](https://img.shields.io/badge/license-MIT-lightgrey?style=flat-square)](./LICENSE)
 
 </div>
@@ -106,7 +106,7 @@ Mods Tampermonkey runs show up here too:
 | **Better HUD** | Listed as always on. **Settings** jumps to Better HUD's MODS tab, where its own switches are. |
 | Any mod that registers itself | Turned on or off live. See [For mod authors](#for-mod-authors). |
 
-**Themes:** pick one, or pick **Game default** for the normal look. The menu itself follows the theme you pick.
+**Themes:** pick one, or pick **Game default** for the normal look. The screen fades over to the new look, and the menu itself follows the theme you pick.
 
 **Your choices are saved.** When you load the game again, a theme you turned off stays off from the first frame, with no flash. When you install a new theme, it takes over once; switch back any time.
 
@@ -160,6 +160,17 @@ If `enable()` or `disable()` throws, the card shows the error and the switch sta
 After each change the menu fires `ssmodmenu:change` on `window`, with `{ id, enabled }` in `event.detail`.
 
 ## Changelog
+
+### 1.3.0 — 2026-10-19
+- **A look for every theme:** Blossom V4 and Cherry Blossom each get a menu look of their own, and the menu stays readable with any theme. Under Blossom V4 its buttons used to be white on white.
+- **Smoother:** switches slide, the menu fades in and out, and picking a theme fades the whole screen over to it.
+- **More fits:** themes sit side by side, and the list fades at the edge when there's more to scroll.
+- **Adding scripts:** the menu shows where a dragged file will go, and **Add** shows a spinner while a script downloads.
+- **Esc** always works while the menu is open, even with another mod's window underneath it.
+- The puzzle button comes back at once when the game rebuilds its top bar.
+- Lighter: no blur behind the menu (the game redraws behind it every frame), and keeping track of added scripts costs about 10% less.
+- Fixed: selecting text in the Add box and letting go outside the menu closed it.
+- Fixed: it could log a sound error when opened before the game's sounds had loaded.
 
 ### 1.2.0 — 2026-10-19
 - **Blossom V4 theme** is found and switched on or off live, like Cherry Blossom and Fuji Dusk.

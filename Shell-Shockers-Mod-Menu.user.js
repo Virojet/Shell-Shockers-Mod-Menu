@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Shell Shockers Mod Menu
 // @namespace    https://github.com/Virojet
-// @version      1.2.0
+// @version      1.3.0
 // @description  One menu for your Shell Shockers mods. Add any userscript, switch themes and turn mods on or off without reloading.
 // @author       Virojet
 // @license      MIT
@@ -100,13 +100,14 @@
   "use strict";
   if (window.ssModMenu) return;
 
-  const VERSION = "1.2.0";
+  const VERSION = "1.3.0";
   // Saved before anything can wrap it: the menu's own record of page changes uses it.
   const NativeMO = window.MutationObserver;
   const STORE = "ssmm.v1";
   const DEFAULT_KEY = "Backquote";
   const byId = id => document.getElementById(id);
-  const sound = name => { try { window.BAWK?.play?.(name); } catch { /* the game's sounds aren't ready yet */ } };
+  // The game's own UI sounds. One asked for before the game has loaded it logs an error, so it's skipped.
+  const sound = name => { try { const b = window.BAWK; if (b?.sounds?.[name]) b.play(name); } catch { /* not ready yet */ } };
 
   /* ---- Saved choices ---- */
   let state;
@@ -180,9 +181,11 @@
       script: def[SCRIPT] || null, run: null, warn: "", note: "", reload: false,
     };
     mods.set(id, m);
-    if (m.group === "theme" && (state.theme == null || (!firstRun && !seenBefore.has(id)))) state.theme = id;
-    if (!state.seen.includes(id)) state.seen.push(id);
-    save();
+    // Saved only when something changed: every mod registers on every page load.
+    let dirty = false;
+    if (m.group === "theme" && (state.theme == null || (!firstRun && !seenBefore.has(id)))) { state.theme = id; dirty = true; }
+    if (!state.seen.includes(id)) { state.seen.push(id); dirty = true; }
+    if (dirty) save();
     sync();
     emit("register", { id });
     return handle(id);
@@ -310,10 +313,13 @@
   }
   const selfFile = (v8 && stack(1, (_, frames) => frameName(frames[0]))) || textNames(new Error().stack)[0] || "";
   const runOf = n => { const m = RUN_URL.exec(n); return m ? runs.get(+m[1]) || null : null; };
-  // names: the stack's source names, top first. Returns undefined when the stack was cut off before it could tell.
-  function ownerOf(names, strict, cut) {
+  const same = n => n;
+  // frames: the stack, top first, and name(frame) its source name. Each name is read only when it's needed, since
+  // most calls are settled by the first few. Returns undefined when the stack was cut off before it could tell.
+  function ownerOf(frames, name, strict, cut) {
     let run = null;
-    for (const n of names) {
+    for (const f of frames) {
+      const n = name(f);
       if (!n) continue;
       if (n === selfFile) {
         if (run) return run; // the menu called the script: what follows is the script's own call
@@ -326,15 +332,14 @@
     }
     return cut ? undefined : run;
   }
+  // One reader per kind of look, made once: this runs on every call a wrapped function gets while a script is on.
+  const readers = [false, true].map(strict => [PEEK, DEPTH].map(depth => (_, frames) => ownerOf(frames, frameName, strict, frames.length >= depth)));
   function callerRun(strict) {
     if (!live.size || current === MENU) return null;
-    if (!v8) return ownerOf(textNames(new Error().stack), strict, false) || null;
+    if (!v8) return ownerOf(textNames(new Error().stack), same, strict, false) || null;
     // A short look settles almost every call (the game's own calls at once); the long one is rarely needed.
-    for (const depth of [PEEK, DEPTH]) {
-      const r = stack(depth, (_, frames) => ownerOf(frames.map(frameName), strict, frames.length >= depth));
-      if (r !== undefined) return r || null;
-    }
-    return null;
+    const look = readers[+strict], r = stack(PEEK, look[0]);
+    return (r !== undefined ? r : stack(DEPTH, look[1])) || null;
   }
 
   // Page changes are recorded all the time while a script is on, and handed to the run whose code made them:
@@ -1133,34 +1138,139 @@
   window.ssModMenuQueue = { push: (...defs) => { defs.forEach(register); return mods.size; } };
 
   /* ---- Menu ---- */
+  // It looks like Better HUD's MODS tab, in the game's own colours. Each theme it knows gets a look of its own.
+  // Any other theme is followed through the game's colour variables, and gets dark glass when it makes the text
+  // light, so the menu stays readable whatever the theme does.
   const CSS = `
     :host { all: initial; }
     :host {
       --mm-size: clamp(13px, 1.48vh, 40px);
       --mm-font: "Nunito", system-ui, sans-serif;
+      --mm-ease: cubic-bezier(.2, .8, .2, 1);
+      --mm-spring: cubic-bezier(.34, 1.4, .64, 1);
       --mm-ink: var(--ss-blue5, #0C576F);
       --mm-sub: color-mix(in srgb, var(--mm-ink) 74%, transparent);
       --mm-head: #fff;
       --mm-head-sub: rgba(255, 255, 255, .9);
       --mm-panel: linear-gradient(to bottom, var(--ss-blue8, #1192BC), var(--ss-blue6, #8dd3ea));
+      --mm-veil: color-mix(in srgb, var(--ss-blue8, #1192BC) 94%, transparent);
       --mm-frame: var(--ss-blue5, #0C576F);
+      --mm-sheen: rgba(255, 255, 255, .28);
       --mm-glass: rgba(255, 255, 255, .24);
-      --mm-glass-hi: rgba(255, 255, 255, .42);
-      --mm-glass-on: rgba(255, 255, 255, .4);
+      --mm-glass-hi: rgba(255, 255, 255, .4);
+      --mm-glass-on: rgba(255, 255, 255, .44);
       --mm-edge: rgba(255, 255, 255, .5);
+      --mm-edge-hi: rgba(255, 255, 255, .9);
       --mm-line: rgba(255, 255, 255, .35);
+      --mm-lip: inset 0 1px 0 rgba(255, 255, 255, .5);
+      --mm-shade: 0 2px 6px rgba(8, 62, 84, .06);
+      --mm-shade-hi: 0 .75em 1.5em -.6em rgba(8, 62, 84, .3);
       --mm-track: color-mix(in srgb, var(--mm-ink) 22%, transparent);
+      --mm-track-shade: inset 0 2px 4px rgba(8, 62, 84, .28);
+      --mm-knob: #fff;
       --mm-on: linear-gradient(180deg, #ffb23f, #ff961d);
       --mm-on-edge: #cf700c;
-      --mm-on-ring: rgba(255, 152, 31, .6);
+      --mm-on-ring: rgba(255, 152, 31, .65);
       --mm-bar: linear-gradient(180deg, color-mix(in srgb, var(--ss-blue0, #c8edf8) 45%, rgba(255, 255, 255, .75)), color-mix(in srgb, var(--ss-blue0, #c8edf8) 70%, rgba(255, 255, 255, .8)));
+      --mm-bar-shade: inset 0 1px 0 rgba(255, 255, 255, .6), 0 8px 22px rgba(8, 62, 84, .12);
+      --mm-btn: rgba(255, 255, 255, .72);
+      --mm-btn-hi: #fff;
+      --mm-kbd: rgba(255, 255, 255, .85);
       --mm-toast: color-mix(in srgb, var(--ss-blue0, #c8edf8) 35%, rgba(255, 255, 255, .97));
-      --mm-btn: rgba(255, 255, 255, .7);
+      --mm-toast-shade: 0 .75em 2em rgba(6, 44, 60, .3);
       --mm-err: #a3231a;
-      --mm-backdrop: rgba(4, 34, 46, .45);
-      --mm-lift: 0 1.4em 3.6em rgba(6, 44, 60, .38);
+      --mm-focus: var(--mm-ink);
+      --mm-close-hi: rgba(255, 255, 255, .16);
+      --mm-backdrop: rgba(4, 34, 46, .5);
+      --mm-lift: 0 1.6em 3.8em rgba(6, 44, 60, .42), 0 .4em 1em rgba(6, 44, 60, .16);
       --mm-title-font: 400 1.375em/1.15 "Sigmar One", var(--mm-font);
-      --mm-title-shadow: .15em .15em 0 color-mix(in srgb, var(--ss-blue3, #0B93BD) 90%, transparent);
+      --mm-title-shade: .15em .15em 0 color-mix(in srgb, var(--ss-blue3, #0B93BD) 90%, transparent);
+    }
+    /* A theme the menu has no look for, whose text is light. */
+    :host([data-tone="dark"]) {
+      --mm-glass: rgba(0, 0, 0, .24);
+      --mm-glass-hi: rgba(0, 0, 0, .34);
+      --mm-glass-on: rgba(0, 0, 0, .4);
+      --mm-edge: rgba(255, 255, 255, .2);
+      --mm-edge-hi: rgba(255, 255, 255, .45);
+      --mm-line: rgba(255, 255, 255, .22);
+      --mm-lip: inset 0 1px 0 rgba(255, 255, 255, .08);
+      --mm-track: rgba(255, 255, 255, .18);
+      --mm-bar: rgba(0, 0, 0, .3);
+      --mm-bar-shade: none;
+      --mm-btn: rgba(0, 0, 0, .3);
+      --mm-btn-hi: rgba(0, 0, 0, .45);
+      --mm-kbd: rgba(255, 255, 255, .1);
+      --mm-toast: rgba(18, 20, 24, .96);
+      --mm-err: #ffb4a8;
+      --mm-title-shade: .12em .12em 0 rgba(0, 0, 0, .55);
+    }
+    /* Cherry Blossom: its plum and pink, with pink for what's on. */
+    :host([data-skin="cherry-blossom"]) {
+      --mm-ink: #5a2c4f;
+      --mm-sub: rgba(90, 44, 79, .78);
+      --mm-head-sub: rgba(255, 240, 247, .94);
+      --mm-panel: linear-gradient(to bottom, #a8508a, #c47aa6 55%, #e7a6c6);
+      --mm-veil: rgba(168, 80, 138, .94);
+      --mm-frame: #5a2c4f;
+      --mm-glass: rgba(255, 240, 247, .26);
+      --mm-glass-hi: rgba(255, 240, 247, .42);
+      --mm-glass-on: rgba(255, 240, 247, .5);
+      --mm-edge: rgba(255, 228, 240, .55);
+      --mm-line: rgba(255, 228, 240, .4);
+      --mm-shade: 0 2px 6px rgba(90, 44, 79, .08);
+      --mm-shade-hi: 0 .75em 1.5em -.6em rgba(90, 44, 79, .34);
+      --mm-track-shade: inset 0 2px 4px rgba(90, 44, 79, .3);
+      --mm-on: linear-gradient(180deg, #ff9fcb, #ff7fb8);
+      --mm-on-edge: #c94f8c;
+      --mm-on-ring: rgba(255, 127, 184, .8);
+      --mm-bar: linear-gradient(180deg, rgba(255, 240, 247, .78), rgba(251, 227, 238, .86));
+      --mm-bar-shade: inset 0 1px 0 rgba(255, 255, 255, .6), 0 8px 22px rgba(90, 44, 79, .14);
+      --mm-btn: rgba(255, 245, 250, .78);
+      --mm-kbd: rgba(255, 245, 250, .9);
+      --mm-toast: rgba(255, 240, 247, .97);
+      --mm-toast-shade: 0 .75em 2em rgba(60, 20, 50, .35);
+      --mm-err: #9b1c3c;
+      --mm-backdrop: rgba(37, 27, 45, .55);
+      --mm-lift: 0 1.6em 3.8em rgba(40, 14, 34, .5), 0 .4em 1em rgba(40, 14, 34, .18);
+      --mm-title-shade: .15em .15em 0 rgba(162, 77, 128, .9);
+    }
+    /* Blossom V4: black glass over its cherry blossom art, pink for what's on. */
+    :host([data-skin="blossom-v4"]) {
+      --mm-ink: #fff;
+      --mm-sub: rgba(255, 255, 255, .7);
+      --mm-head-sub: rgba(254, 197, 229, .92);
+      --mm-panel: linear-gradient(rgba(12, 7, 10, .8), rgba(12, 7, 10, .9)), var(--bv-art, none) center / cover, #0c070a;
+      --mm-veil: rgba(12, 7, 10, .92);
+      --mm-frame: var(--bv-pink, #f9b5b5);
+      --mm-sheen: rgba(255, 220, 235, .14);
+      --mm-glass: rgba(0, 0, 0, .44);
+      --mm-glass-hi: rgba(36, 14, 24, .62);
+      --mm-glass-on: rgba(91, 23, 48, .5);
+      --mm-edge: rgba(249, 181, 181, .24);
+      --mm-edge-hi: rgba(249, 181, 181, .6);
+      --mm-line: rgba(249, 181, 181, .28);
+      --mm-lip: inset 0 1px 0 rgba(255, 220, 235, .07);
+      --mm-shade: 0 0 transparent;
+      --mm-shade-hi: 0 .75em 1.5em -.6em rgba(0, 0, 0, .6);
+      --mm-track: rgba(255, 255, 255, .16);
+      --mm-track-shade: inset 0 2px 4px rgba(0, 0, 0, .45);
+      --mm-on: linear-gradient(180deg, #ffbfd8, #f594b5);
+      --mm-on-edge: #f9b5b5;
+      --mm-on-ring: rgba(249, 181, 181, .7);
+      --mm-bar: rgba(0, 0, 0, .5);
+      --mm-bar-shade: inset 0 1px 0 rgba(255, 220, 235, .07);
+      --mm-btn: rgba(255, 255, 255, .08);
+      --mm-btn-hi: rgba(249, 181, 181, .16);
+      --mm-kbd: rgba(255, 255, 255, .1);
+      --mm-toast: rgba(14, 8, 11, .96);
+      --mm-toast-shade: 0 .75em 2em rgba(0, 0, 0, .55);
+      --mm-err: #ff9bb0;
+      --mm-focus: var(--bv-pink-light, #fec5e5);
+      --mm-close-hi: rgba(249, 181, 181, .14);
+      --mm-backdrop: rgba(0, 0, 0, .55);
+      --mm-lift: 0 1.6em 4.5em rgba(0, 0, 0, .65);
+      --mm-title-shade: .1em .1em 0 rgba(0, 0, 0, .85);
     }
     /* Fuji Dusk paints with its own tokens, which reach in here from <html>. */
     :host([data-skin="fuji-dusk"]) {
@@ -1168,110 +1278,171 @@
       --mm-sub: var(--fd-muted, #b4c1bb);
       --mm-head: var(--fd-text, #f4f0e7);
       --mm-head-sub: var(--fd-muted, #b4c1bb);
-      --mm-panel: rgba(23, 34, 34, .94);
+      --mm-panel: rgba(23, 34, 34, .97);
+      --mm-veil: rgba(23, 34, 34, .95);
       --mm-frame: var(--fd-border, rgba(235, 232, 218, .16));
+      --mm-sheen: rgba(255, 255, 241, .1);
       --mm-glass: rgba(255, 255, 255, .045);
       --mm-glass-hi: rgba(255, 255, 255, .085);
       --mm-glass-on: color-mix(in srgb, var(--fd-accent, #ddb47f) 9%, transparent);
       --mm-edge: var(--fd-border, rgba(235, 232, 218, .16));
+      --mm-edge-hi: rgba(235, 232, 218, .34);
       --mm-line: var(--fd-border, rgba(235, 232, 218, .16));
+      --mm-lip: inset 0 1px 0 rgba(255, 255, 241, .08);
+      --mm-shade: 0 0 transparent;
+      --mm-shade-hi: 0 .75em 1.5em -.6em rgba(0, 0, 0, .5);
       --mm-track: rgba(255, 255, 255, .14);
+      --mm-track-shade: inset 0 2px 4px rgba(0, 0, 0, .35);
       --mm-on: var(--fd-accent, #ddb47f);
       --mm-on-edge: var(--fd-accent, #ddb47f);
       --mm-on-ring: color-mix(in srgb, var(--fd-accent, #ddb47f) 65%, transparent);
       --mm-bar: rgba(255, 255, 255, .045);
-      --mm-toast: rgba(23, 34, 34, .96);
+      --mm-bar-shade: none;
       --mm-btn: rgba(255, 255, 255, .08);
+      --mm-btn-hi: rgba(255, 255, 255, .14);
+      --mm-kbd: rgba(255, 255, 255, .08);
+      --mm-toast: rgba(23, 34, 34, .96);
+      --mm-toast-shade: 0 .75em 2em rgba(0, 0, 0, .5);
       --mm-err: #ffb4a8;
+      --mm-focus: var(--fd-accent, #ddb47f);
+      --mm-close-hi: rgba(255, 255, 255, .08);
       --mm-backdrop: rgba(10, 18, 18, .6);
       --mm-lift: 0 1.4em 4.5em rgba(0, 0, 0, .55);
       --mm-title-font: 800 1.375em/1.15 var(--mm-font);
-      --mm-title-shadow: none;
+      --mm-title-shade: none;
     }
     * { box-sizing: border-box; }
-    button { font: inherit; color: inherit; }
+    button, textarea { font: inherit; color: inherit; }
+    [hidden] { display: none !important; }
 
     dialog {
-      padding: 0; margin: auto; border: 0; background: none; color: var(--mm-ink); overflow: visible;
-      max-width: none; max-height: none; font: 700 var(--mm-size)/1.35 var(--mm-font);
+      padding: 0; margin: auto; border: 0; background: none; color: var(--mm-ink); overflow: visible; max-width: none; max-height: none;
+      font: 700 var(--mm-size)/1.35 var(--mm-font); -webkit-font-smoothing: antialiased; -moz-osx-font-smoothing: grayscale;
     }
     dialog::backdrop { background: var(--mm-backdrop); }
+    dialog[open]::backdrop { animation: mm-fade .24s ease-out; }
+    dialog.out::backdrop { animation: mm-fade-out .16s ease-in both; }
+    /* No backdrop blur: the game draws behind the menu every frame, so it would be worked out again every frame. */
     .panel {
-      display: flex; flex-direction: column; width: min(34em, calc(100vw - 32px)); max-height: min(46em, calc(100vh - 32px));
-      padding: 1.2em 1.25em 1.1em; border: .15em solid var(--mm-frame); border-radius: .75em;
-      background: var(--mm-panel); box-shadow: var(--mm-lift);
-      -webkit-backdrop-filter: blur(14px); backdrop-filter: blur(14px);
+      position: relative; display: flex; flex-direction: column; width: min(36em, calc(100vw - 32px)); max-height: min(48em, calc(100vh - 32px));
+      padding: 1.2em 1.25em 1.1em; border: .15em solid var(--mm-frame); border-radius: .875em;
+      background: var(--mm-panel); box-shadow: inset 0 1px 0 var(--mm-sheen), var(--mm-lift);
     }
-    dialog[open] .panel { animation: mm-in .22s ease-out both; }
     .panel:focus { outline: none; }
-    @keyframes mm-in { from { opacity: 0; transform: translateY(6px); } }
+    dialog[open] .panel { animation: mm-in .3s var(--mm-ease) both; }
+    dialog.out .panel { animation: mm-out .16s ease-in both; }
+    @keyframes mm-in { from { opacity: 0; transform: translateY(.75em) scale(.98); } }
+    @keyframes mm-out { to { opacity: 0; transform: translateY(.4em) scale(.98); } }
+    @keyframes mm-fade { from { opacity: 0; } }
+    @keyframes mm-fade-out { to { opacity: 0; } }
 
     header { display: flex; align-items: flex-start; gap: 1em; margin-bottom: 1em; padding-bottom: .9em; border-bottom: 1px solid var(--mm-line); }
     .titles { flex: 1; min-width: 0; }
-    h2 { margin: 0; font: var(--mm-title-font); letter-spacing: .01em; color: var(--mm-head); text-shadow: var(--mm-title-shadow); }
+    h2 { margin: 0; font: var(--mm-title-font); letter-spacing: .01em; color: var(--mm-head); text-shadow: var(--mm-title-shade); }
     .sub { margin: .3em 0 0; font-size: .84em; font-weight: 700; color: var(--mm-head-sub); }
     .close {
-      flex: none; display: grid; place-items: center; width: 2em; height: 2em; margin: -.35em -.4em 0 0; padding: 0; border: 0; border-radius: .4em;
-      background: none; color: var(--mm-head); cursor: pointer; transition: transform .12s;
+      flex: none; display: grid; place-items: center; width: 2.1em; height: 2.1em; margin: -.4em -.45em 0 0; padding: 0; border: 0; border-radius: 50%;
+      background: transparent; color: var(--mm-head); cursor: pointer; transition: background-color .15s, transform .15s var(--mm-ease);
     }
-    .close:hover { transform: scale(1.1); }
-    .close svg { width: 1.35em; height: 1.35em; filter: drop-shadow(.08em .1em 0 rgba(0, 0, 0, .2)); }
+    .close:hover { background-color: var(--mm-close-hi); transform: scale(1.06); }
+    .close:active { transform: scale(.94); }
+    .close svg { width: 1.3em; height: 1.3em; filter: drop-shadow(.08em .1em 0 rgba(0, 0, 0, .2)); }
     :host([data-skin="fuji-dusk"]) .close svg { filter: none; }
 
-    .list { min-height: 0; overflow-y: auto; margin: 0 -.5em 0 0; padding: .1em .5em .2em 0; scrollbar-width: thin; scrollbar-color: color-mix(in srgb, var(--mm-ink) 35%, transparent) transparent; }
-    .group + .group { margin-top: 1.15em; }
-    h3 { margin: 0 0 .55em .15em; font-size: .76em; font-weight: 900; letter-spacing: .08em; text-transform: uppercase; color: var(--mm-head-sub); }
-    .cards { display: grid; gap: .6em; }
-    .card {
-      position: relative; display: grid; grid-template-columns: minmax(0, 1fr) auto; grid-template-areas: "name ctl" "desc ctl";
-      align-items: center; column-gap: .875em; row-gap: .2em; min-height: 4.1em; padding: .75em .875em;
-      border: 1px solid var(--mm-edge); border-radius: .875em; background: var(--mm-glass);
-      box-shadow: inset 0 1px 0 rgba(255, 255, 255, .5), 0 2px 6px rgba(8, 62, 84, .06);
-      cursor: pointer; -webkit-user-select: none; user-select: none;
-      transition: background .15s, border-color .15s, box-shadow .15s, transform .15s;
+    .list {
+      --ft: 0em; --fb: 0em;
+      min-height: 0; overflow-y: auto; overscroll-behavior: contain; margin: 0 -.6em 0 0; padding: .15em .6em .3em 0;
+      scrollbar-width: thin; scrollbar-color: color-mix(in srgb, var(--mm-ink) 35%, transparent) transparent;
     }
-    .card:hover { background: var(--mm-glass-hi); box-shadow: inset 0 1px 0 rgba(255, 255, 255, .6), 0 8px 18px rgba(8, 62, 84, .12); transform: translateY(-1px); }
-    .card:has(input:checked) { background: var(--mm-glass-on); border-color: var(--mm-on-ring); }
+    /* Where there's more to scroll, the edge of the list fades out. */
+    .list.more-up { --ft: 1.6em; }
+    .list.more-down { --fb: 2.2em; }
+    .list.more-up, .list.more-down {
+      -webkit-mask-image: linear-gradient(transparent, #000 var(--ft), #000 calc(100% - var(--fb)), transparent);
+      mask-image: linear-gradient(transparent, #000 var(--ft), #000 calc(100% - var(--fb)), transparent);
+    }
+    .group + .group { margin-top: 1.15em; }
+    h3 {
+      display: flex; align-items: baseline; gap: .6em; margin: 0 .15em .55em; font-size: .76em; font-weight: 900; letter-spacing: .08em;
+      text-transform: uppercase; color: var(--mm-head-sub);
+    }
+    .count { margin-left: auto; font-weight: 800; letter-spacing: .03em; text-transform: none; opacity: .85; }
+    .cards { display: grid; gap: .6em; }
+    .themes { grid-template-columns: repeat(auto-fill, minmax(min(100%, 14.5em), 1fr)); }
+    .themes > :last-child:nth-child(odd) { grid-column: 1 / -1; }
+
+    .card {
+      position: relative; display: grid; grid-template-columns: minmax(0, 1fr) auto auto; grid-template-areas: "name btns ctl" "desc btns ctl";
+      align-items: center; row-gap: .2em; min-height: 4.1em; padding: .75em .875em;
+      border: 1px solid var(--mm-edge); border-radius: .875em; background-color: var(--mm-glass); box-shadow: var(--mm-lip), var(--mm-shade);
+      cursor: pointer; -webkit-user-select: none; user-select: none; -webkit-tap-highlight-color: transparent;
+      transition: background-color .18s, border-color .18s, box-shadow .2s, transform .2s var(--mm-ease);
+    }
+    .card:hover { background-color: var(--mm-glass-hi); box-shadow: var(--mm-lip), var(--mm-shade-hi); transform: translateY(-1px); }
+    .card:active:not(:has(.btn:active)) { transform: scale(.99); transition-duration: .08s; }
+    .card:has(input:checked) { background-color: var(--mm-glass-on); border-color: var(--mm-on-ring); }
     .card.fixed { cursor: default; }
-    .card.fixed:hover { transform: none; }
-    :host([data-skin="fuji-dusk"]) .card, :host([data-skin="fuji-dusk"]) .card:hover { box-shadow: inset 0 1px 0 rgba(255, 255, 241, .08); }
-    .name { grid-area: name; min-width: 0; font-size: 1.03em; font-weight: 800; line-height: 1.25; overflow-wrap: anywhere; }
+    .card.fixed:hover, .card.fixed:active { transform: none; }
+    .card.has-cmds { grid-template-areas: "name btns ctl" "desc btns ctl" "cmds cmds cmds"; }
+    .themes .card { grid-template-columns: minmax(0, 1fr) auto; grid-template-areas: "name ctl" "desc ctl"; }
+    .themes .card.has-btns { grid-template-areas: "name ctl" "desc ctl" "btns btns"; }
+    .themes .card.has-cmds { grid-template-areas: "name ctl" "desc ctl" "cmds cmds"; }
+    .themes .card.has-btns.has-cmds { grid-template-areas: "name ctl" "desc ctl" "btns btns" "cmds cmds"; }
+    .name { grid-area: name; align-self: end; min-width: 0; font-size: 1.03em; font-weight: 800; line-height: 1.25; overflow-wrap: anywhere; }
     .ver { margin-left: .45em; font-size: .78em; font-weight: 700; color: var(--mm-sub); }
-    .desc { grid-area: desc; min-width: 0; font-size: .78em; font-weight: 600; line-height: 1.35; color: var(--mm-sub); }
-    .desc.err { color: var(--mm-err); }
-    .ctl { grid-area: ctl; display: flex; align-items: center; gap: .6em; }
+    .desc {
+      grid-area: desc; align-self: start; min-width: 0; font-size: .78em; font-weight: 600; line-height: 1.35; color: var(--mm-sub);
+      display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 3; overflow: hidden;
+    }
+    .desc.err { color: var(--mm-err); -webkit-line-clamp: 6; }
+    .btns { grid-area: btns; display: flex; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: .45em; margin-left: .75em; }
+    .btns:empty { display: none; }
+    .themes .btns { justify-content: flex-start; margin: .5em 0 0; }
+    .ctl { grid-area: ctl; display: flex; align-items: center; margin-left: .875em; }
+    .cmds { grid-area: cmds; display: flex; flex-wrap: wrap; gap: .45em; margin-top: .5em; padding-top: .6em; border-top: 1px solid var(--mm-line); }
     input { position: absolute; width: 1px; height: 1px; margin: 0; opacity: 0; pointer-events: none; }
-    .switch, .radio { flex: none; position: relative; background: var(--mm-track); box-shadow: inset 0 2px 4px rgba(8, 62, 84, .28); transition: background .18s, box-shadow .18s; }
+
+    .switch, .radio { flex: none; position: relative; background-color: var(--mm-track); box-shadow: var(--mm-track-shade); }
     .switch { width: 2.875em; height: 1.625em; border-radius: 999px; }
-    .switch::after, .radio::after { content: ""; position: absolute; border-radius: 50%; background: #fff; box-shadow: 0 2px 5px rgba(0, 0, 0, .25); transition: transform .2s cubic-bezier(.3, 1.4, .6, 1); }
-    .switch::after { top: .1875em; left: .1875em; width: 1.25em; height: 1.25em; }
     .radio { width: 1.5em; height: 1.5em; border-radius: 50%; }
-    .radio::after { inset: .42em; transform: scale(0); }
-    input:checked + .switch, input:checked + .radio { background: var(--mm-on); box-shadow: inset 0 1px 2px rgba(0, 0, 0, .15), 0 0 0 1px var(--mm-on-edge); }
+    /* The "on" fill fades in over the track, so the colour change is as smooth as the knob. */
+    .switch::before, .radio::before {
+      content: ""; position: absolute; inset: 0; border-radius: inherit; background: var(--mm-on);
+      box-shadow: inset 0 1px 2px rgba(0, 0, 0, .15), 0 0 0 1px var(--mm-on-edge); opacity: 0; transition: opacity .2s;
+    }
+    .switch::after, .radio::after { content: ""; position: absolute; border-radius: 50%; background: var(--mm-knob); box-shadow: 0 2px 5px rgba(0, 0, 0, .25); }
+    .switch::after { top: .1875em; left: .1875em; width: 1.25em; height: 1.25em; transition: transform .28s var(--mm-spring); }
+    .radio::after { inset: .42em; transform: scale(0); transition: transform .24s var(--mm-spring); }
+    input:checked + .switch::before, input:checked + .radio::before { opacity: 1; }
     input:checked + .switch::after { transform: translateX(1.25em); }
     input:checked + .radio::after { transform: scale(1); }
-    input:focus-visible + .switch, input:focus-visible + .radio, button:focus-visible { outline: 2px solid var(--mm-head); outline-offset: 3px; }
+    input:focus-visible + .switch, input:focus-visible + .radio, button:focus-visible { outline: 2px solid var(--mm-focus); outline-offset: 3px; }
+
     .btn {
-      flex: none; height: 2.2em; padding: 0 .9em; border: 1px solid var(--mm-edge); border-radius: .6em;
-      background: var(--mm-btn); color: var(--mm-ink); font-size: .82em; font-weight: 900; cursor: pointer; transition: background .15s, border-color .15s;
+      flex: none; display: inline-flex; align-items: center; justify-content: center; gap: .45em; height: 2.2em; padding: 0 .9em;
+      border: 1px solid var(--mm-edge); border-radius: .6em; background-color: var(--mm-btn); color: var(--mm-ink);
+      font-size: .82em; font-weight: 900; white-space: nowrap; cursor: pointer;
+      transition: background-color .15s, border-color .15s, color .15s, opacity .15s, transform .12s var(--mm-ease);
     }
-    .btn:hover { background: var(--mm-glass-hi); border-color: var(--mm-on-ring); }
-    .btn:disabled { opacity: .6; cursor: default; }
-    .btn.quiet { background: none; color: var(--mm-sub); }
-    .btn.quiet:hover { color: var(--mm-ink); }
-    .btn.danger, .btn.danger:hover { color: var(--mm-err); border-color: var(--mm-err); }
-    .card.has-cmds { grid-template-areas: "name ctl" "desc ctl" "cmds cmds"; }
-    .cmds { grid-area: cmds; display: flex; flex-wrap: wrap; gap: .45em; margin-top: .4em; }
+    .btn:hover { background-color: var(--mm-btn-hi); border-color: var(--mm-edge-hi); }
+    .btn:active { transform: translateY(1px); }
+    .btn:disabled { opacity: .55; cursor: default; transform: none; }
+    .btn.quiet { background-color: transparent; border-color: transparent; color: var(--mm-sub); }
+    .btn.quiet:hover { background-color: var(--mm-glass-hi); border-color: var(--mm-edge); color: var(--mm-ink); }
+    .btn.danger, .btn.danger:hover { background-color: var(--mm-btn); border-color: currentColor; color: var(--mm-err); }
     .btn.cmd { height: 2em; padding: 0 .8em; font-size: .76em; }
-    .empty { margin: .4em .2em; font-size: .9em; color: var(--mm-head-sub); }
+
+    .empty {
+      display: grid; justify-items: center; gap: .9em; padding: 1.8em 1.2em; border: 1px dashed var(--mm-edge); border-radius: .875em;
+      text-align: center; font-size: .9em; color: var(--mm-head-sub);
+    }
+    .empty p { margin: 0; max-width: 26em; }
 
     .add { min-height: 0; overflow-y: auto; }
-    .add[hidden], .list[hidden] { display: none; }
     .addbox {
-      display: grid; gap: .75em; padding: .875em; border: 1px solid var(--mm-edge); border-radius: .875em; background: var(--mm-glass);
-      box-shadow: inset 0 1px 0 rgba(255, 255, 255, .5), 0 2px 6px rgba(8, 62, 84, .06);
+      display: grid; gap: .75em; padding: .875em; border: 1px solid var(--mm-edge); border-radius: .875em;
+      background-color: var(--mm-glass); box-shadow: var(--mm-lip), var(--mm-shade);
     }
-    :host([data-skin="fuji-dusk"]) .addbox { box-shadow: inset 0 1px 0 rgba(255, 255, 241, .08); }
     .addnote, .addmsg { margin: 0; font-size: .84em; line-height: 1.4; }
     .addnote { font-weight: 700; color: var(--mm-sub); }
     .addmsg { font-weight: 800; }
@@ -1279,47 +1450,76 @@
     .addmsg.warn { color: var(--mm-err); }
     textarea {
       display: block; width: 100%; min-height: 10em; max-height: 24em; resize: vertical; margin: 0; padding: .7em .8em;
-      border: 1px solid var(--mm-edge); border-radius: .6em; outline: none; background: var(--mm-btn); color: var(--mm-ink);
-      font: 600 .8em/1.45 ui-monospace, Consolas, monospace; scrollbar-width: thin;
+      border: 1px solid var(--mm-edge); border-radius: .6em; outline: none; background-color: var(--mm-btn); color: var(--mm-ink);
+      font: 600 .8em/1.45 ui-monospace, Consolas, monospace; scrollbar-width: thin; transition: border-color .15s, box-shadow .15s, opacity .15s;
     }
     textarea::placeholder { color: var(--mm-sub); opacity: 1; }
-    textarea:focus { border-color: var(--mm-on-ring); }
+    textarea:focus { border-color: var(--mm-edge-hi); box-shadow: 0 0 0 3px color-mix(in srgb, var(--mm-focus) 22%, transparent); }
+    textarea[aria-invalid="true"] { border-color: var(--mm-err); }
+    textarea:read-only { opacity: .65; }
     .addbar { display: flex; align-items: center; gap: .6em; }
     .grow { flex: 1; }
+    .go { min-width: 5.5em; }
+    .go.busy::before {
+      content: ""; flex: none; width: .95em; height: .95em; border-radius: 50%; border: .17em solid currentColor; border-right-color: transparent;
+      animation: mm-spin .7s linear infinite;
+    }
+    @keyframes mm-spin { to { transform: rotate(1turn); } }
+    .drop {
+      position: absolute; inset: .45em; z-index: 2; display: grid; place-items: center; padding: 1em;
+      border: 2px dashed var(--mm-edge-hi); border-radius: .7em; background: var(--mm-veil); color: var(--mm-head);
+      font-size: 1.05em; font-weight: 900; text-align: center; opacity: 0; visibility: hidden; pointer-events: none;
+      transition: opacity .15s, visibility .15s;
+    }
+    .panel.dropping .drop { opacity: 1; visibility: visible; }
 
     footer {
       display: flex; align-items: center; gap: .6em; margin-top: 1em; padding: .5em .5em .5em .875em;
-      border: 1px solid var(--mm-edge); border-radius: 1em; background: var(--mm-bar);
-      box-shadow: inset 0 1px 0 rgba(255, 255, 255, .6), 0 8px 22px rgba(8, 62, 84, .12);
+      border: 1px solid var(--mm-edge); border-radius: 1em; background: var(--mm-bar); box-shadow: var(--mm-bar-shade);
       font-size: .875em; font-weight: 900;
     }
-    :host([data-skin="fuji-dusk"]) footer { box-shadow: none; }
-    .mmver { flex: none; font-weight: 900; }
+    .mmver { flex: none; }
     .hint { flex: 1; min-width: 0; font-size: .9em; font-weight: 700; color: var(--mm-sub); }
     .hint.warn { color: var(--mm-err); }
-    .key { display: inline-flex; align-items: center; gap: .5em; padding-right: .35em; }
+    .addbtn[aria-expanded="true"] { background-color: var(--mm-glass-on); border-color: var(--mm-edge-hi); }
+    .key { padding-right: .35em; }
     kbd {
       display: inline-grid; place-items: center; min-width: 1.75em; height: 1.6em; padding: 0 .4em; border-radius: .35em;
-      border: 1px solid color-mix(in srgb, var(--mm-ink) 30%, transparent); border-bottom-width: 2px; background: rgba(255, 255, 255, .85);
+      border: 1px solid color-mix(in srgb, var(--mm-ink) 30%, transparent); border-bottom-width: 2px; background: var(--mm-kbd);
       font: 900 1.05em/1 var(--mm-font); color: var(--mm-ink);
     }
-    :host([data-skin="fuji-dusk"]) kbd { background: rgba(255, 255, 255, .08); }
-    .key.listening { border-color: var(--mm-on-edge); background: var(--mm-glass-on); }
-    .key.listening kbd { color: var(--mm-on-edge); }
+    /* A one-character symbol key gets a typewriter face. \` and ' sit so high and small in any font that they're drawn
+       as a stroke in the middle of the key instead; the character itself stays there for screen readers. */
+    kbd { position: relative; }
+    kbd span { display: inline-block; font: 700 1.2em/1 ui-monospace, Consolas, monospace; }
+    kbd.mark::before { content: ""; width: .13em; height: .55em; border-radius: .1em; background: currentColor; }
+    kbd.grave::before { transform: rotate(-38deg); }
+    kbd.mark span { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+    .key.listening { border-color: var(--mm-on-edge); background-color: var(--mm-glass-on); }
+    .key.listening kbd { color: var(--mm-on-edge); animation: mm-blink 1s ease-in-out infinite; }
+    @keyframes mm-blink { 50% { opacity: .35; } }
 
     .toast {
       position: fixed; inset: 1.2em auto auto 50%; transform: translateX(-50%); margin: 0; display: none;
-      max-width: min(30em, calc(100vw - 32px)); padding: .7em 1.1em; border: 1px solid var(--mm-edge); border-radius: .9em;
+      max-width: min(30em, calc(100vw - 32px)); padding: .75em 1.15em; border: 1px solid var(--mm-edge); border-radius: .9em;
       background: var(--mm-toast); color: var(--mm-ink); font: 800 var(--mm-size)/1.35 var(--mm-font);
-      box-shadow: 0 10px 28px rgba(6, 44, 60, .3); overflow: visible;
+      box-shadow: var(--mm-toast-shade); overflow: visible; -webkit-font-smoothing: antialiased;
     }
-    .toast.show { display: block; animation: mm-toast .22s ease-out both; }
-    @keyframes mm-toast { from { opacity: 0; transform: translate(-50%, -6px); } }
-    @media (prefers-reduced-motion: reduce) { *, *::after { transition: none !important; animation: none !important; } }
+    .toast.show { display: block; animation: mm-toast-in .32s var(--mm-ease) both; }
+    .toast.hide { animation: mm-toast-out .2s ease-in both; }
+    @keyframes mm-toast-in { from { opacity: 0; transform: translate(-50%, -.7em) scale(.97); } }
+    @keyframes mm-toast-out { to { opacity: 0; transform: translate(-50%, -.5em) scale(.97); } }
+    .probe { display: none; color: color-mix(in srgb, var(--mm-ink), transparent 0%); }
+    @media (prefers-reduced-motion: reduce) {
+      *, *::before, *::after, dialog::backdrop { transition: none !important; animation: none !important; }
+    }
   `;
 
-  let host, shadow, dialog, listEl, keyBtn, keyCap, hintEl, toastEl, launcher, toastTimer, listening = false;
-  let addView, addBtn, codeBox, addMsg, goBtn, adding = false, busy = false, removing = null, inputs = 0;
+  let host, shadow, dialog, panel, listEl, themeGroup, modGroup, themeBox, modBox, countEl, emptyEl, keyBtn, keyCap, hintEl, toastEl, probe;
+  let addView, addBtn, codeBox, addMsg, goBtn, pickBtn, launcher, toastTimer = 0, closing = 0, listening = false;
+  let adding = false, busy = false, removing = null, inputs = 0, dragDepth = 0;
+  const motion = window.matchMedia?.("(prefers-reduced-motion: reduce)");
+  const calm = () => !!motion?.matches;
 
   function buildUi() {
     if (host || !document.body) return !!host;
@@ -1328,27 +1528,40 @@
     host.id = "ss-mod-menu";
     shadow = host.attachShadow({ mode: "open" });
     shadow.innerHTML = `<style>${CSS}</style>
-      <dialog aria-labelledby="mm-title">
+      <dialog aria-labelledby="mm-title" aria-describedby="mm-sub">
         <div class="panel" tabindex="-1" autofocus>
           <header>
             <div class="titles">
               <h2 id="mm-title">Mod Menu</h2>
-              <p class="sub">Switch themes and turn mods on or off. No reload needed.</p>
+              <p class="sub" id="mm-sub">Switch themes and turn mods on or off. No reload needed.</p>
             </div>
-            <button type="button" class="close" aria-label="Close"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3.6" stroke-linecap="round"><path d="M6 6l12 12M18 6L6 18"/></svg></button>
+            <button type="button" class="close" aria-label="Close" title="Close (Esc)"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3.6" stroke-linecap="round" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"/></svg></button>
           </header>
-          <div class="list"></div>
+          <div class="list">
+            <section class="group" hidden>
+              <h3 id="mm-themes">Theme</h3>
+              <div class="cards themes" role="radiogroup" aria-labelledby="mm-themes"></div>
+            </section>
+            <section class="group" hidden>
+              <h3><span id="mm-mods">Mods</span><span class="count"></span></h3>
+              <div class="cards mods" role="group" aria-labelledby="mm-mods"></div>
+            </section>
+            <div class="empty" hidden>
+              <p>No mods yet. Add a script, or install a theme or a mod that works with the Mod Menu.</p>
+              <button type="button" class="btn" data-add>Add a script</button>
+            </div>
+          </div>
           <section class="add" hidden>
             <h3 id="mm-add-title">Add a script</h3>
             <div class="addbox">
-              <p class="addnote">Paste a link to a .user.js file, or the whole script. You can also drop the file here.</p>
+              <p class="addnote">Paste a link to a .user.js file (raw GitHub, a GitHub file page or Greasy Fork), or the whole script. You can also drop the file here.</p>
               <textarea spellcheck="false" autocomplete="off" placeholder="https://…/my-script.user.js" aria-labelledby="mm-add-title"></textarea>
               <p class="addmsg" role="status"></p>
               <div class="addbar">
                 <button type="button" class="btn pick">Choose file</button>
                 <span class="grow"></span>
-                <button type="button" class="btn cancel">Cancel</button>
-                <button type="button" class="btn go">Add</button>
+                <button type="button" class="btn quiet cancel">Cancel</button>
+                <button type="button" class="btn go" title="Ctrl+Enter">Add</button>
               </div>
             </div>
             <input type="file" accept=".js,text/javascript,application/javascript" hidden>
@@ -1356,62 +1569,99 @@
           <footer>
             <span class="mmver">Mod Menu v${VERSION}</span>
             <span class="hint" role="status"></span>
-            <button type="button" class="btn addbtn">Add script</button>
+            <button type="button" class="btn addbtn" aria-expanded="false">Add script</button>
             <button type="button" class="btn key" title="Change the key that opens this menu">Hotkey <kbd></kbd></button>
           </footer>
+          <div class="drop" aria-hidden="true">Drop the script to add it</div>
         </div>
       </dialog>
-      <div class="toast" popover="manual" role="status"></div>`;
-    dialog = shadow.querySelector("dialog");
-    listEl = shadow.querySelector(".list");
-    keyBtn = shadow.querySelector(".key");
+      <div class="toast" popover="manual" role="status"></div>
+      <i class="probe"></i>`;
+    const q = s => shadow.querySelector(s);
+    dialog = q("dialog");
+    panel = q(".panel");
+    listEl = q(".list");
+    [themeGroup, modGroup] = shadow.querySelectorAll(".group");
+    themeBox = q(".themes");
+    modBox = q(".mods");
+    countEl = q(".count");
+    emptyEl = q(".empty");
+    keyBtn = q(".key");
     keyCap = keyBtn.querySelector("kbd");
-    hintEl = shadow.querySelector(".hint");
-    toastEl = shadow.querySelector(".toast");
-    addView = shadow.querySelector(".add");
-    addBtn = shadow.querySelector(".addbtn");
-    codeBox = shadow.querySelector("textarea");
-    addMsg = shadow.querySelector(".addmsg");
-    goBtn = shadow.querySelector(".go");
-    const fileIn = shadow.querySelector("input[type=file]"), panel = shadow.querySelector(".panel");
+    hintEl = q(".hint");
+    toastEl = q(".toast");
+    probe = q(".probe");
+    addView = q(".add");
+    addBtn = q(".addbtn");
+    codeBox = q("textarea");
+    addMsg = q(".addmsg");
+    goBtn = q(".go");
+    pickBtn = q(".pick");
+    const fileIn = q("input[type=file]");
 
     // Keys pressed inside the open menu stay out of the game. Once it closes, they reach the game,
     // even while the browser hasn't moved focus out of the menu yet.
     for (const type of ["keydown", "keyup", "keypress"]) host.addEventListener(type, e => { if (dialog.open) e.stopPropagation(); });
-    shadow.querySelector(".close").addEventListener("click", close);
-    // A click outside the panel lands on the dialog itself (its backdrop).
-    dialog.addEventListener("click", e => { if (e.target === dialog) close(); });
+    q(".close").addEventListener("click", () => close());
+    // A click outside the panel lands on the dialog itself (its backdrop). One that started inside the panel,
+    // like selecting text in the Add box and letting go outside, doesn't close it.
+    let downOutside = false;
+    dialog.addEventListener("pointerdown", e => { downOutside = e.target === dialog; });
+    dialog.addEventListener("click", e => { if (e.target === dialog && downOutside) close(); });
     dialog.addEventListener("cancel", e => {
-      if (listening) { e.preventDefault(); stopListening(); }
-      else if (adding) { e.preventDefault(); showAdd(false); }
+      e.preventDefault();
+      back();
     });
-    dialog.addEventListener("close", () => { stopListening(); if (!busy) showAdd(false); });
-    keyBtn.addEventListener("click", () => (listening ? stopListening() : startListening()));
+    dialog.addEventListener("close", () => {
+      clearTimeout(closing);
+      closing = 0;
+      dialog.classList.remove("out");
+      stopListening();
+      if (!busy) showAdd(false);
+    });
+    keyBtn.addEventListener("click", () => {
+      sound("ui_click");
+      listening ? stopListening() : startListening();
+    });
     listEl.addEventListener("change", e => {
       const t = e.target;
-      if (t.name === "mm-theme") setTheme(t.value);
+      sound("ui_onchange");
+      if (t.name === "mm-theme") morph(() => setTheme(t.value));
       else if (t.dataset.id) setEnabled(t.dataset.id, t.checked);
-      sound("ui_click");
     });
     listEl.addEventListener("click", e => {
       const b = e.target.closest?.("button");
       if (!b) return;
       e.preventDefault();
-      const d = b.dataset, m = mods.get(d.settings || d.reload || d.remove || d.of);
+      sound("ui_click");
+      const d = b.dataset;
+      if ("add" in d) return showAdd(true);
+      const m = mods.get(d.settings || d.reload || d.remove || d.of);
       if (!m) return;
       if (d.reload) return location.reload();
       if (d.remove) return removeClicked(m);
-      close();
+      // A mod's settings or command opens over the game, so the menu gets out of the way at once.
+      close(true);
       if (d.cmd) return runCommand(m, d.cmd);
       let opened = false;
       const s = settingsOf(m);
       try { opened = !!s && within(s === m.def ? MENU : m.run, s.openSettings, s, []) !== false; } catch (err) { console.warn("[Mod Menu]", m.name, err); }
       if (!opened) toast(`${m.name} settings open from the home screen.`);
     });
+    // A description cut short shows in full on hover.
+    listEl.addEventListener("pointerover", e => {
+      const d = e.target.closest?.(".desc");
+      if (d) d.title = d.scrollHeight > d.clientHeight + 1 ? d.textContent : "";
+    });
+    listEl.addEventListener("scroll", edges, { passive: true });
+    new ResizeObserver(edges).observe(listEl);
 
-    addBtn.addEventListener("click", () => showAdd(!adding));
-    shadow.querySelector(".cancel").addEventListener("click", () => showAdd(false));
-    shadow.querySelector(".pick").addEventListener("click", () => fileIn.click());
+    addBtn.addEventListener("click", () => {
+      sound("ui_click");
+      showAdd(!adding);
+    });
+    q(".cancel").addEventListener("click", () => showAdd(false));
+    pickBtn.addEventListener("click", () => fileIn.click());
     fileIn.addEventListener("change", () => {
       const f = fileIn.files[0];
       fileIn.value = "";
@@ -1421,9 +1671,23 @@
     codeBox.addEventListener("keydown", e => {
       if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) { e.preventDefault(); addFrom(codeBox.value); }
     });
-    // A .user.js file dropped anywhere on the menu is added.
-    panel.addEventListener("dragover", e => { if (e.dataTransfer?.types.includes("Files")) e.preventDefault(); });
+    codeBox.addEventListener("input", () => {
+      if (!codeBox.hasAttribute("aria-invalid")) return;
+      codeBox.removeAttribute("aria-invalid");
+      addNote("");
+    });
+    // A .user.js file dropped anywhere on the menu is added. While one is dragged over it, the menu says so.
+    const files = e => !!e.dataTransfer?.types?.includes("Files");
+    const dropping = on => { dragDepth = on ? dragDepth : 0; panel.classList.toggle("dropping", on); };
+    panel.addEventListener("dragenter", e => { if (files(e) && !busy) { dragDepth++; dropping(true); } });
+    panel.addEventListener("dragleave", e => { if (files(e) && --dragDepth <= 0) dropping(false); });
+    panel.addEventListener("dragover", e => {
+      if (!files(e)) return;
+      e.preventDefault();
+      e.dataTransfer.dropEffect = busy ? "none" : "copy";
+    });
     panel.addEventListener("drop", e => {
+      dropping(false);
       const f = e.dataTransfer?.files[0];
       if (!f) return;
       e.preventDefault();
@@ -1440,55 +1704,88 @@
     if (text != null) n.textContent = text;
     return n;
   };
-  // Its own settings, or those of what an added script registered with the menu.
-  const settingsOf = m => (typeof m.def?.openSettings === "function" && m.def) || (m.run?.on && m.run.defs.find(d => typeof d.openSettings === "function")) || null;
-  const button = (parent, cls, text, data) => {
-    const b = parent.appendChild(el("button", "btn" + (cls ? " " + cls : ""), text));
+  const button = (cls, text, data, title) => {
+    const b = el("button", "btn" + (cls ? " " + cls : ""), text);
     b.type = "button";
     Object.assign(b.dataset, data);
+    if (title) b.title = title;
     return b;
   };
-  function card(m, { theme = false, checked = false } = {}) {
-    const c = el(m.alwaysOn ? "div" : "label", "card" + (m.alwaysOn ? " fixed" : ""));
-    const name = c.appendChild(el("span", "name", m.name));
-    if (m.version) name.appendChild(el("span", "ver", "v" + m.version));
-    const problem = m.error || m.warn;
-    c.appendChild(el("span", "desc" + (problem ? " err" : ""), problem || m.note || m.description));
-    const ctl = c.appendChild(el("span", "ctl"));
-    if (m.reload) button(ctl, "", "Reload", { reload: m.id }).title = "Reload the game";
-    if (settingsOf(m) && (m.alwaysOn || m.active)) button(ctl, "", "Settings", { settings: m.id });
-    if (m.script) {
-      const sure = removing?.id === m.id;
-      button(ctl, sure ? "danger" : "quiet", sure ? "Remove it?" : "Remove", { remove: m.id });
+  // Its own settings, or those of what an added script registered with the menu.
+  const settingsOf = m => (typeof m.def?.openSettings === "function" && m.def) || (m.run?.on && m.run.defs.find(d => typeof d.openSettings === "function")) || null;
+  const NONE = { id: "none", name: "Game default", version: "", description: "The game's own look, with no theme.", group: "theme" };
+
+  // Cards are kept and changed in place, so a switch slides across instead of being drawn again. Each part is
+  // only touched when what it shows has changed.
+  const cardEls = new Map();
+  function card(m, theme, checked) {
+    const key = m === NONE ? "" : m.id, kind = m.alwaysOn ? "fixed" : theme ? "radio" : "switch";
+    let k = cardEls.get(key);
+    if (!k || k.kind !== kind) {
+      const c = el(m.alwaysOn ? "div" : "label", "card" + (m.alwaysOn ? " fixed" : ""));
+      k = { el: c, kind, sig: {}, cmds: null, input: null };
+      k.name = c.appendChild(el("span", "name"));
+      k.desc = c.appendChild(el("span", "desc"));
+      k.btns = c.appendChild(el("span", "btns"));
+      if (!m.alwaysOn) {
+        const ctl = c.appendChild(el("span", "ctl")), input = k.input = ctl.appendChild(el("input"));
+        if (theme) {
+          input.type = "radio";
+          input.name = "mm-theme";
+          input.value = m.id;
+        } else {
+          input.type = "checkbox";
+          input.setAttribute("role", "switch");
+          input.dataset.id = m.id;
+        }
+        // Clicking the card works its switch, not the first button on it.
+        input.id = "mm-in-" + ++inputs;
+        c.htmlFor = input.id;
+        k.desc.id = input.id + "-d";
+        input.setAttribute("aria-describedby", k.desc.id);
+        ctl.appendChild(el("span", theme ? "radio" : "switch"));
+      }
+      cardEls.set(key, k);
+    }
+    const c = k.el, s = k.sig, name = m.name + "\n" + m.version;
+    if (s.name !== name) {
+      s.name = name;
+      k.name.textContent = m.name;
+      if (m.version) k.name.appendChild(el("span", "ver", "v" + m.version));
+      k.input?.setAttribute("aria-label", m.name);
+    }
+    const problem = m.error || m.warn, text = problem || m.note || m.description, desc = (problem ? "!" : "") + text;
+    if (s.desc !== desc) {
+      s.desc = desc;
+      k.desc.textContent = text;
+      k.desc.classList.toggle("err", !!problem);
+    }
+    const btns = [];
+    if (m.reload) btns.push(["", "Reload", "reload", "Reload the game"]);
+    if ((m.alwaysOn || m.active) && settingsOf(m)) btns.push(["", "Settings", "settings"]);
+    if (m.script) btns.push(removing?.id === m.id ? ["danger", "Remove it?", "remove", "Click again to remove it and everything it saved"] : ["quiet", "Remove", "remove"]);
+    const bs = btns.join("|");
+    if (s.btns !== bs) {
+      s.btns = bs;
+      k.btns.replaceChildren(...btns.map(([cls, label, act, title]) => button(cls, label, { [act]: m.id }, title)));
+      c.classList.toggle("has-btns", btns.length > 0);
     }
     // Commands the script added with GM_registerMenuCommand.
-    const cmds = m.run?.on ? [...m.run.commands] : [];
-    if (cmds.length) {
-      c.classList.add("has-cmds");
-      const row = c.appendChild(el("span", "cmds"));
-      for (const [key, cmd] of cmds) button(row, "cmd", cmd.caption, { cmd: key, of: m.id });
-    }
-    if (!m.alwaysOn) {
-      const input = ctl.appendChild(el("input"));
-      if (theme) {
-        input.type = "radio";
-        input.name = "mm-theme";
-        input.value = m.id;
-      } else {
-        input.type = "checkbox";
-        input.setAttribute("role", "switch");
-        input.dataset.id = m.id;
+    const cmds = m.run?.on ? [...m.run.commands] : [], cs = cmds.map(([id, cmd]) => id + "\u0001" + cmd.caption).join("\u0002");
+    if (s.cmds !== cs) {
+      s.cmds = cs;
+      k.cmds?.remove();
+      k.cmds = null;
+      if (cmds.length) {
+        k.cmds = c.appendChild(el("span", "cmds"));
+        for (const [id, cmd] of cmds) k.cmds.appendChild(button("cmd", cmd.caption, { cmd: id, of: m.id }));
       }
-      input.checked = checked;
-      input.setAttribute("aria-label", m.name);
-      // Clicking the card works its switch, not the first button on it.
-      input.id = "mm-in-" + ++inputs;
-      c.htmlFor = input.id;
-      ctl.appendChild(el("span", theme ? "radio" : "switch"));
+      c.classList.toggle("has-cmds", cmds.length > 0);
     }
+    if (k.input && k.input.checked !== checked) k.input.checked = checked;
     return c;
   }
-  // Which control had focus, so it can have it again after the list is rebuilt.
+  // Which control had focus, so it can have it again if its card was drawn again.
   const focusKey = n => {
     const d = n?.dataset;
     if (!d) return "";
@@ -1499,113 +1796,218 @@
   };
   function render() {
     if (!listEl || !dialog.open) return;
-    const had = focusKey(shadow.activeElement);
-    const all = [...mods.values()];
-    const themes = all.filter(m => m.group === "theme");
-    const others = all.filter(m => m.group !== "theme");
+    const had = focusKey(shadow.activeElement), seen = new Set();
+    const all = [...mods.values()], themes = all.filter(m => m.group === "theme"), others = all.filter(m => m.group !== "theme");
     const chosen = activeTheme()?.id || "none";
-    const frag = document.createDocumentFragment();
-    if (themes.length) {
-      const g = frag.appendChild(el("section", "group"));
-      g.appendChild(el("h3", null, "Theme"));
-      const cards = g.appendChild(el("div", "cards"));
-      cards.setAttribute("role", "radiogroup");
-      cards.setAttribute("aria-label", "Theme");
-      cards.appendChild(card({ id: "none", name: "Game default", description: "The game's own look, with no theme.", group: "theme" }, { theme: true, checked: chosen === "none" }));
-      for (const m of themes) cards.appendChild(card(m, { theme: true, checked: chosen === m.id }));
-    }
-    if (others.length) {
-      const g = frag.appendChild(el("section", "group"));
-      g.appendChild(el("h3", null, "Mods"));
-      const cards = g.appendChild(el("div", "cards"));
-      for (const m of others) cards.appendChild(card(m, { checked: m.active }));
-    }
-    if (!all.length) frag.appendChild(el("p", "empty", "No mods yet. Click Add script below to add one, or install a theme or a mod that works with the Mod Menu."));
-    listEl.replaceChildren(frag);
-    if (had) [...listEl.querySelectorAll("input, button")].find(n => focusKey(n) === had)?.focus({ preventScroll: true });
+    // Cards go in again only when the order changed: moving one would cut its switch's slide short.
+    const fill = (box, list) => {
+      const nodes = list.map(([m, theme, on]) => (seen.add(m === NONE ? "" : m.id), card(m, theme, on)));
+      if (nodes.length !== box.children.length || nodes.some((n, i) => box.children[i] !== n)) box.replaceChildren(...nodes);
+    };
+    themeGroup.hidden = !themes.length;
+    fill(themeBox, themes.length ? [[NONE, true, chosen === "none"], ...themes.map(m => [m, true, chosen === m.id])] : []);
+    modGroup.hidden = !others.length;
+    fill(modBox, others.map(m => [m, false, m.active]));
+    const on = others.filter(m => m.active).length;
+    countEl.textContent = on === others.length ? "All on" : on ? `${on} of ${others.length} on` : "All off";
+    emptyEl.hidden = all.length > 0;
+    for (const key of cardEls.keys()) if (!seen.has(key)) cardEls.delete(key);
+    if (had && focusKey(shadow.activeElement) !== had) [...listEl.querySelectorAll("input, button")].find(n => focusKey(n) === had)?.focus({ preventScroll: true });
+    edges();
   }
-  // Cheap refresh after a change: the skin follows the active theme, and the list is rebuilt only while it shows.
+  // The list's edges fade where there's more to scroll.
+  function edges() {
+    const l = listEl, up = l.scrollTop > 1, down = l.scrollTop + l.clientHeight < l.scrollHeight - 1;
+    if (l.classList.contains("more-up") !== up) l.classList.toggle("more-up", up);
+    if (l.classList.contains("more-down") !== down) l.classList.toggle("more-down", down);
+  }
+
+  // The look follows the active theme. A theme added as a script, under one of the known names, gets its look too.
+  const SKINS = { "cherry-blossom": /cherry[\s-]*blossom/i, "blossom-v4": /blossom[\s-]*v4/i, "fuji-dusk": /fuji[\s-]*dusk/i };
+  const skinOf = t => !t ? "" : Object.hasOwn(SKINS, t.id) ? t.id : (t.script && Object.keys(SKINS).find(k => SKINS[k].test(t.script.name))) || "";
+  // Any other theme: the colour its text ends up with decides between the light glass and the dark.
+  let toneOf = null;
+  function tone(t, fresh) {
+    const id = skinOf(t) ? "" : t?.id || "none";
+    if (!fresh && id === toneOf) return;
+    toneOf = id;
+    let dark = false;
+    if (id) {
+      const c = getComputedStyle(probe).color, n = (c.match(/[\d.]+/g) || []).map(Number), max = c.startsWith("color(") ? 1 : 255;
+      dark = n.length >= 3 && (.2126 * n[0] + .7152 * n[1] + .0722 * n[2]) / max > .6;
+    }
+    if (dark) host.dataset.tone = "dark";
+    else delete host.dataset.tone;
+  }
+  // Cheap refresh after a change: the look follows the active theme, and the list is redrawn only while it shows.
   function paint() {
     if (!host) return;
     if (current !== MENU) return within(MENU, paint, null, []);
-    const t = activeTheme();
-    // Fuji Dusk added as a script still gets the menu's Fuji look.
-    if (t) host.dataset.skin = t.script && /fuji dusk/i.test(t.script.name) ? "fuji-dusk" : t.id;
-    else delete host.dataset.skin;
-    if (!listening) keyCap.textContent = keyLabel(state.key);
+    const t = activeTheme(), skin = skinOf(t);
+    if ((host.dataset.skin || "") !== skin) {
+      if (skin) host.dataset.skin = skin;
+      else delete host.dataset.skin;
+    }
+    if (dialog.open) tone(t);
+    if (!listening) showKey(state.key);
     if (launcher) launcher.title = `Mod Menu (${keyLabel(state.key)})`;
     render();
   }
 
   function open() {
-    if (!buildUi() || dialog.open) return;
+    if (!buildUi()) return;
     if (current !== MENU) return within(MENU, open, null, []);
+    if (closing) { // opened again while it fades out
+      clearTimeout(closing);
+      closing = 0;
+      dialog.classList.remove("out");
+      panel.focus({ preventScroll: true });
+      return;
+    }
+    if (dialog.open) return;
     findBetterHud();
     if (document.pointerLockElement) document.exitPointerLock();
     say("");
     dialog.showModal();
+    tone(activeTheme(), true);
     paint();
     sound("ui_popupopen");
   }
-  function close() {
-    if (!dialog?.open) return;
+  // Fades out, unless something else opens over the game right after (a mod's settings), which needs the page now.
+  function close(now) {
+    if (!dialog?.open || (closing && !now)) return;
     shadow.activeElement?.blur();
-    dialog.close();
+    stopListening();
+    if (now || calm()) return dialog.close();
+    dialog.classList.add("out");
+    closing = setTimeout(() => {
+      closing = 0;
+      dialog.classList.remove("out");
+      dialog.close();
+    }, 160);
+    sound("ui_popupclose");
   }
   function toggle() {
-    dialog?.open ? close() : open();
+    dialog?.open && !closing ? close() : open();
   }
+  // Esc steps back first: out of choosing a key, then out of Add a script, then out of the menu.
+  function back() {
+    if (listening) stopListening();
+    else if (adding) showAdd(false);
+    else close();
+  }
+  // A theme picked in the menu fades the whole screen from the old look to the new one, where the browser can.
+  // While it fades, the browser shows a picture of the page, so a click can't reach the menu: the fade then ends at
+  // once and the click goes to what's under it. Focus stays in the menu, so Esc still works.
+  let fade = null, missed = null;
+  function morph(fn) {
+    if (calm() || document.hidden || typeof document.startViewTransition !== "function") return fn();
+    let vt;
+    try { vt = document.startViewTransition(fn); } catch { return fn(); }
+    vt.ready.catch(() => { /* skipped before it began */ });
+    fade = vt;
+    vt.finished.catch(() => { /* skipped: the theme still changed */ }).finally(() => {
+      if (fade !== vt) return;
+      fade = null;
+      if (dialog.open && !shadow.activeElement) panel.focus({ preventScroll: true });
+    });
+  }
+  window.addEventListener("pointerdown", e => {
+    missed = null;
+    if (!fade || !dialog?.open) return;
+    missed = { x: e.clientX, y: e.clientY };
+    e.preventDefault();
+    fade.skipTransition();
+  }, true);
+  window.addEventListener("click", e => {
+    if (!missed) return;
+    const at = missed;
+    missed = null;
+    if (e.target !== document.documentElement && e.target !== document.body) return; // it reached the menu after all
+    e.preventDefault();
+    e.stopImmediatePropagation();
+    requestAnimationFrame(() => {
+      const n = dialog.open && shadow.elementFromPoint(at.x, at.y);
+      if (n === dialog) close();
+      else if (n && dialog.contains(n)) n.click();
+    });
+  }, true);
+  const reveal = n => {
+    if (!calm()) n.animate?.([{ opacity: 0, transform: "translateY(.4em)" }, { opacity: 1, transform: "none" }], { duration: 220, easing: "cubic-bezier(.2, .8, .2, 1)" });
+  };
 
   function toast(text, ms = 4200) {
     if (!buildUi()) return;
     if (current !== MENU) return within(MENU, toast, null, [text, ms]);
-    toastEl.textContent = text;
-    toastEl.classList.add("show");
-    try { if (toastEl.matches(":popover-open")) toastEl.hidePopover(); toastEl.showPopover(); } catch { /* no popover support: it shows as a fixed box */ }
+    tone(activeTheme());
     clearTimeout(toastTimer);
+    toastEl.textContent = text;
+    // A new message slides in again, even over one still showing.
+    if (toastEl.classList.contains("show")) {
+      toastEl.classList.remove("show", "hide");
+      void toastEl.offsetWidth;
+    }
+    toastEl.classList.add("show");
+    // Shown again so it's above a menu opened since.
+    try { if (toastEl.matches(":popover-open")) toastEl.hidePopover(); toastEl.showPopover(); } catch { /* no popover support: it shows as a fixed box */ }
     toastTimer = setTimeout(() => {
-      toastEl.classList.remove("show");
-      try { toastEl.hidePopover(); } catch { /* already hidden */ }
+      toastEl.classList.add("hide");
+      toastTimer = setTimeout(() => {
+        toastEl.classList.remove("show", "hide");
+        try { toastEl.hidePopover(); } catch { /* already hidden */ }
+      }, calm() ? 0 : 200);
     }, ms);
   }
 
   /* ---- Adding and removing scripts ---- */
   function showAdd(on) {
+    const was = adding;
     adding = on;
     addView.hidden = !on;
     listEl.hidden = on;
     addBtn.setAttribute("aria-expanded", on);
     if (on) {
-      if (!busy) addNote("");
+      if (!busy) {
+        addNote("");
+        codeBox.removeAttribute("aria-invalid");
+      }
       codeBox.focus();
     } else {
       render();
       if (addView.contains(shadow.activeElement)) addBtn.focus();
     }
+    if (was !== on && dialog.open) reveal(on ? addView : listEl);
   }
   function addNote(text, warn = false) {
     addMsg.textContent = text;
     addMsg.classList.toggle("warn", warn);
   }
+  function setBusy(on) {
+    busy = on;
+    goBtn.disabled = pickBtn.disabled = on;
+    goBtn.classList.toggle("busy", on);
+    codeBox.readOnly = on;
+  }
   async function addFrom(src) {
     if (busy) return;
-    busy = true;
-    goBtn.disabled = true;
+    setBusy(true);
     if (!adding) showAdd(true);
+    codeBox.removeAttribute("aria-invalid");
     try {
       const text = typeof src === "string" ? src : await src.text();
-      addNote(/^\s*https?:\/\/\S+\s*$/i.test(text) ? "Downloading…" : "Adding…");
+      addNote(typeof src !== "string" ? `Adding ${src.name}…` : /^\s*https?:\/\/\S+\s*$/i.test(text) ? "Downloading…" : "Adding…");
       const m = mods.get(await addScript(text));
       codeBox.value = "";
+      setBusy(false);
       showAdd(false);
       toast(m.error || m.warn ? `Added ${m.name}, but it ran into a problem. Its card says what.`
         : `Added ${m.name}. If Tampermonkey runs it too, turn it off there so it doesn't run twice.`, 7000);
-      sound("ui_click");
+      sound("ui_onchange");
     } catch (err) {
       addNote((err && err.message) || String(err), true);
+      codeBox.setAttribute("aria-invalid", "true");
     } finally {
-      busy = false;
-      goBtn.disabled = false;
+      setBusy(false);
     }
   }
   // Remove asks once more: a second click within 4 seconds removes the script and everything it saved.
@@ -1614,7 +2016,7 @@
       clearTimeout(removing.timer);
       removing = null;
       removeScript(m.id);
-      shadow.querySelector(".panel").focus();
+      panel.focus();
       toast(`Removed ${m.name}.`);
       return;
     }
@@ -1640,6 +2042,11 @@
     AltLeft: "Left Alt", AltRight: "Right Alt", ArrowUp: "↑", ArrowDown: "↓", ArrowLeft: "←", ArrowRight: "→", IntlBackslash: "\\",
   };
   const keyLabel = code => KEY_NAMES[code] || code.replace(/^Key|^Digit/, "").replace(/^Numpad/, "Num ");
+  function showKey(code) {
+    const label = keyLabel(code), symbol = label.length === 1 && !/[\p{L}\p{N}]/u.test(label);
+    keyCap.className = label === "`" ? "mark grave" : label === "'" ? "mark" : "";
+    keyCap.replaceChildren(symbol ? el("span", null, label) : label);
+  }
   const REFUSED = new Set(["Escape", "Tab", "Enter", "Space", "MetaLeft", "MetaRight", "ContextMenu", "CapsLock", "NumpadEnter"]);
   function gameKeyUsing(code) {
     try {
@@ -1655,6 +2062,7 @@
   function startListening() {
     listening = true;
     keyBtn.classList.add("listening");
+    keyCap.className = "";
     keyCap.textContent = "…";
     say("Press a key for the menu. Esc cancels.");
   }
@@ -1662,7 +2070,7 @@
     if (!listening) return;
     listening = false;
     keyBtn.classList.remove("listening");
-    keyCap.textContent = keyLabel(state.key);
+    showKey(state.key);
     if (!hintEl.classList.contains("warn")) say("");
   }
   const typingIn = t => !!t && (t.isContentEditable || t.tagName === "TEXTAREA" || t.tagName === "SELECT" ||
@@ -1683,7 +2091,16 @@
       save();
       stopListening();
       say(`The menu now opens with ${keyLabel(e.code)}.`);
+      sound("ui_onchange");
       paint();
+      return;
+    }
+    // While the menu is open it owns Esc, so an overlay underneath (a mod's guide, the game's pause menu) doesn't
+    // take it first. This listener is added as the page starts, ahead of the ones mods add later.
+    if (e.key === "Escape" && dialog?.open && !closing && !e.isComposing) {
+      e.preventDefault();
+      e.stopImmediatePropagation();
+      if (!e.repeat) back();
       return;
     }
     if (e.code !== state.key || e.repeat || e.ctrlKey || e.altKey || e.metaKey || typingIn(e.composedPath()[0])) return;
@@ -1693,6 +2110,9 @@
   }, true);
 
   /* ---- Launcher: a button beside the game's Settings and Fullscreen buttons ---- */
+  // The game rebuilds its top bar on some screen changes. The bar and what holds it are watched for their own
+  // children only, so the button is back at once and the game's other updates never wake this up.
+  const barWatch = new NativeMO(() => placeLauncher());
   function placeLauncher() {
     const row = byId("corner-buttons");
     if (!row || (launcher && launcher.parentNode === row)) return;
@@ -1709,6 +2129,8 @@
     }
     launcher.title = `Mod Menu (${keyLabel(state.key)})`;
     row.insertBefore(launcher, gear || row.lastElementChild);
+    barWatch.disconnect();
+    for (let n = row; n && n !== document.body; n = n.parentNode) barWatch.observe(n, { childList: true });
     if (!state.hinted) {
       state.hinted = true;
       save();
@@ -1743,8 +2165,8 @@
     buildUi();
     findBetterHud();
     placeLauncher();
-    // The game rebuilds its top bar on some screen changes, so the button is put back when it goes missing.
-    setInterval(placeLauncher, 1000);
+    // In case the whole top bar is replaced somewhere the watch above can't see.
+    setInterval(placeLauncher, 2000);
   };
   if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", boot, { once: true });
   else boot();

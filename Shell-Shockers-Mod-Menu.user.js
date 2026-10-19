@@ -106,7 +106,9 @@
   const STORE = "ssmm.v1";
   const DEFAULT_KEY = "Backquote";
   const byId = id => document.getElementById(id);
-  // The game's own UI sounds. One asked for before the game has loaded it logs an error, so it's skipped.
+  // The game's own UI sounds, used the way the game uses them: a button clicks, a switch or theme changes, the Add view
+  // toggles like a tab, the menu opens and closes like a popup, an added script confirms, and a removal or a refusal
+  // resets. One asked for before the game has loaded it logs an error, so it's skipped.
   const sound = name => { try { const b = window.BAWK; if (b?.sounds?.[name]) b.play(name); } catch { /* not ready yet */ } };
 
   /* ---- Saved choices ---- */
@@ -1272,6 +1274,44 @@
       --mm-lift: 0 1.6em 4.5em rgba(0, 0, 0, .65);
       --mm-title-shade: .1em .1em 0 rgba(0, 0, 0, .85);
     }
+    /* Fuji Dark: Blossom V4's look in Fuji colours, black glass over its photo with amber for what's on. */
+    :host([data-skin="fuji-dark"]) {
+      --mm-ink: #f4f0e7;
+      --mm-sub: rgba(244, 240, 231, .72);
+      --mm-head: #f4f0e7;
+      --mm-head-sub: rgba(240, 207, 160, .92);
+      --mm-panel: linear-gradient(rgba(9, 15, 15, .78), rgba(9, 15, 15, .9)), var(--fk-art, none) center / cover, #0b1211;
+      --mm-veil: rgba(9, 15, 15, .92);
+      --mm-frame: var(--fk-amber, #ddb47f);
+      --mm-sheen: rgba(255, 240, 215, .14);
+      --mm-glass: rgba(0, 0, 0, .44);
+      --mm-glass-hi: rgba(31, 27, 19, .62);
+      --mm-glass-on: rgba(94, 68, 34, .45);
+      --mm-edge: rgba(221, 180, 127, .24);
+      --mm-edge-hi: rgba(221, 180, 127, .6);
+      --mm-line: rgba(221, 180, 127, .28);
+      --mm-lip: inset 0 1px 0 rgba(255, 240, 215, .07);
+      --mm-shade: 0 0 transparent;
+      --mm-shade-hi: 0 .75em 1.5em -.6em rgba(0, 0, 0, .6);
+      --mm-track: rgba(255, 255, 255, .16);
+      --mm-track-shade: inset 0 2px 4px rgba(0, 0, 0, .45);
+      --mm-on: linear-gradient(180deg, #f0cfa0, #d9aa6c);
+      --mm-on-edge: #ddb47f;
+      --mm-on-ring: rgba(221, 180, 127, .7);
+      --mm-bar: rgba(0, 0, 0, .5);
+      --mm-bar-shade: inset 0 1px 0 rgba(255, 240, 215, .07);
+      --mm-btn: rgba(255, 255, 255, .08);
+      --mm-btn-hi: rgba(221, 180, 127, .16);
+      --mm-kbd: rgba(255, 255, 255, .1);
+      --mm-toast: rgba(11, 17, 17, .96);
+      --mm-toast-shade: 0 .75em 2em rgba(0, 0, 0, .55);
+      --mm-err: #ffb4a8;
+      --mm-focus: #f0cfa0;
+      --mm-close-hi: rgba(221, 180, 127, .14);
+      --mm-backdrop: rgba(0, 0, 0, .55);
+      --mm-lift: 0 1.6em 4.5em rgba(0, 0, 0, .65);
+      --mm-title-shade: .1em .1em 0 rgba(0, 0, 0, .85);
+    }
     /* Fuji Dusk paints with its own tokens, which reach in here from <html>. */
     :host([data-skin="fuji-dusk"]) {
       --mm-ink: var(--fd-text, #f4f0e7);
@@ -1535,7 +1575,7 @@
               <h2 id="mm-title">Mod Menu</h2>
               <p class="sub" id="mm-sub">Switch themes and turn mods on or off. No reload needed.</p>
             </div>
-            <button type="button" class="close" aria-label="Close" title="Close (Esc)"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3.6" stroke-linecap="round" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"/></svg></button>
+            <button type="button" class="close" data-sound="" aria-label="Close" title="Close (Esc)"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3.6" stroke-linecap="round" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"/></svg></button>
           </header>
           <div class="list">
             <section class="group" hidden>
@@ -1548,7 +1588,7 @@
             </section>
             <div class="empty" hidden>
               <p>No mods yet. Add a script, or install a theme or a mod that works with the Mod Menu.</p>
-              <button type="button" class="btn" data-add>Add a script</button>
+              <button type="button" class="btn" data-add data-sound="ui_toggletab">Add a script</button>
             </div>
           </div>
           <section class="add" hidden>
@@ -1560,8 +1600,8 @@
               <div class="addbar">
                 <button type="button" class="btn pick">Choose file</button>
                 <span class="grow"></span>
-                <button type="button" class="btn quiet cancel">Cancel</button>
-                <button type="button" class="btn go" title="Ctrl+Enter">Add</button>
+                <button type="button" class="btn quiet cancel" data-sound="ui_toggletab">Cancel</button>
+                <button type="button" class="btn go" data-sound="" title="Ctrl+Enter">Add</button>
               </div>
             </div>
             <input type="file" accept=".js,text/javascript,application/javascript" hidden>
@@ -1569,7 +1609,7 @@
           <footer>
             <span class="mmver">Mod Menu v${VERSION}</span>
             <span class="hint" role="status"></span>
-            <button type="button" class="btn addbtn" aria-expanded="false">Add script</button>
+            <button type="button" class="btn addbtn" data-sound="ui_toggletab" aria-expanded="false">Add script</button>
             <button type="button" class="btn key" title="Change the key that opens this menu">Hotkey <kbd></kbd></button>
           </footer>
           <div class="drop" aria-hidden="true">Drop the script to add it</div>
@@ -1602,6 +1642,12 @@
     // Keys pressed inside the open menu stay out of the game. Once it closes, they reach the game,
     // even while the browser hasn't moved focus out of the menu yet.
     for (const type of ["keydown", "keyup", "keypress"]) host.addEventListener(type, e => { if (dialog.open) e.stopPropagation(); });
+    // Every button in the menu clicks, keyboard presses included. One with a sound of its own names it in
+    // data-sound; an empty one leaves it to what the button does (closing, adding).
+    shadow.addEventListener("click", e => {
+      const b = e.target.closest?.("button"), s = b && (b.dataset.sound ?? "ui_click");
+      if (s && !b.disabled) sound(s);
+    });
     q(".close").addEventListener("click", () => close());
     // A click outside the panel lands on the dialog itself (its backdrop). One that started inside the panel,
     // like selecting text in the Add box and letting go outside, doesn't close it.
@@ -1619,10 +1665,7 @@
       stopListening();
       if (!busy) showAdd(false);
     });
-    keyBtn.addEventListener("click", () => {
-      sound("ui_click");
-      listening ? stopListening() : startListening();
-    });
+    keyBtn.addEventListener("click", () => listening ? stopListening() : startListening());
     listEl.addEventListener("change", e => {
       const t = e.target;
       sound("ui_onchange");
@@ -1633,7 +1676,6 @@
       const b = e.target.closest?.("button");
       if (!b) return;
       e.preventDefault();
-      sound("ui_click");
       const d = b.dataset;
       if ("add" in d) return showAdd(true);
       const m = mods.get(d.settings || d.reload || d.remove || d.of);
@@ -1656,10 +1698,7 @@
     listEl.addEventListener("scroll", edges, { passive: true });
     new ResizeObserver(edges).observe(listEl);
 
-    addBtn.addEventListener("click", () => {
-      sound("ui_click");
-      showAdd(!adding);
-    });
+    addBtn.addEventListener("click", () => showAdd(!adding));
     q(".cancel").addEventListener("click", () => showAdd(false));
     pickBtn.addEventListener("click", () => fileIn.click());
     fileIn.addEventListener("change", () => {
@@ -1763,11 +1802,11 @@
     const btns = [];
     if (m.reload) btns.push(["", "Reload", "reload", "Reload the game"]);
     if ((m.alwaysOn || m.active) && settingsOf(m)) btns.push(["", "Settings", "settings"]);
-    if (m.script) btns.push(removing?.id === m.id ? ["danger", "Remove it?", "remove", "Click again to remove it and everything it saved"] : ["quiet", "Remove", "remove"]);
+    if (m.script) btns.push(removing?.id === m.id ? ["danger", "Remove it?", "remove", "Click again to remove it and everything it saved", "ui_reset"] : ["quiet", "Remove", "remove"]);
     const bs = btns.join("|");
     if (s.btns !== bs) {
       s.btns = bs;
-      k.btns.replaceChildren(...btns.map(([cls, label, act, title]) => button(cls, label, { [act]: m.id }, title)));
+      k.btns.replaceChildren(...btns.map(([cls, label, act, title, snd]) => button(cls, label, snd ? { [act]: m.id, sound: snd } : { [act]: m.id }, title)));
       c.classList.toggle("has-btns", btns.length > 0);
     }
     // Commands the script added with GM_registerMenuCommand.
@@ -1823,7 +1862,7 @@
   }
 
   // The look follows the active theme. A theme added as a script, under one of the known names, gets its look too.
-  const SKINS = { "cherry-blossom": /cherry[\s-]*blossom/i, "blossom-v4": /blossom[\s-]*v4/i, "fuji-dusk": /fuji[\s-]*dusk/i };
+  const SKINS = { "cherry-blossom": /cherry[\s-]*blossom/i, "blossom-v4": /blossom[\s-]*v4/i, "fuji-dusk": /fuji[\s-]*dusk/i, "fuji-dark": /fuji[\s-]*dark/i };
   const skinOf = t => !t ? "" : Object.hasOwn(SKINS, t.id) ? t.id : (t.script && Object.keys(SKINS).find(k => SKINS[k].test(t.script.name))) || "";
   // Any other theme: the colour its text ends up with decides between the light glass and the dark.
   let toneOf = null;
@@ -1890,11 +1929,16 @@
   function toggle() {
     dialog?.open && !closing ? close() : open();
   }
-  // Esc steps back first: out of choosing a key, then out of Add a script, then out of the menu.
+  // Esc steps back first: out of choosing a key, then out of Add a script, then out of the menu. Each sounds like
+  // the button that does the same.
   function back() {
-    if (listening) stopListening();
-    else if (adding) showAdd(false);
-    else close();
+    if (listening) {
+      stopListening();
+      sound("ui_click");
+    } else if (adding) {
+      showAdd(false);
+      sound("ui_toggletab");
+    } else close();
   }
   // A theme picked in the menu fades the whole screen from the old look to the new one, where the browser can.
   // While it fades, the browser shows a picture of the page, so a click can't reach the menu: the fade then ends at
@@ -1929,7 +1973,7 @@
     requestAnimationFrame(() => {
       const n = dialog.open && shadow.elementFromPoint(at.x, at.y);
       if (n === dialog) close();
-      else if (n && dialog.contains(n)) n.click();
+      else if (n && dialog.contains(n)) (n.closest("button") || n).click?.(); // the close button's icon can't be clicked itself
     });
   }, true);
   const reveal = n => {
@@ -1994,18 +2038,21 @@
     if (!adding) showAdd(true);
     codeBox.removeAttribute("aria-invalid");
     try {
-      const text = typeof src === "string" ? src : await src.text();
-      addNote(typeof src !== "string" ? `Adding ${src.name}…` : /^\s*https?:\/\/\S+\s*$/i.test(text) ? "Downloading…" : "Adding…");
+      const text = typeof src === "string" ? src : await src.text(), link = typeof src === "string" && /^\s*https?:\/\/\S+\s*$/i.test(text);
+      addNote(typeof src !== "string" ? `Adding ${src.name}…` : link ? "Downloading…" : "Adding…");
+      // Code or a file is added at once and only its result sounds. A download takes a moment, so it clicks first.
+      if (link) sound("ui_click");
       const m = mods.get(await addScript(text));
       codeBox.value = "";
       setBusy(false);
       showAdd(false);
       toast(m.error || m.warn ? `Added ${m.name}, but it ran into a problem. Its card says what.`
         : `Added ${m.name}. If Tampermonkey runs it too, turn it off there so it doesn't run twice.`, 7000);
-      sound("ui_onchange");
+      sound("ui_playconfirm");
     } catch (err) {
       addNote((err && err.message) || String(err), true);
       codeBox.setAttribute("aria-invalid", "true");
+      sound("ui_reset");
     } finally {
       setBusy(false);
     }
@@ -2082,11 +2129,17 @@
       e.stopImmediatePropagation();
       if (e.code === "Escape") {
         stopListening();
+        sound("ui_click");
         return say("");
       }
-      if (REFUSED.has(e.code) || !e.code) return say(`${e.key === " " ? "Space" : e.key || "That key"} can't open the menu. Pick another key.`, true);
+      // A key that can't be used sounds like the game's own refusals, once per press.
+      const refuse = text => {
+        if (!e.repeat) sound("ui_reset");
+        say(text, true);
+      };
+      if (REFUSED.has(e.code) || !e.code) return refuse(`${e.key === " " ? "Space" : e.key || "That key"} can't open the menu. Pick another key.`);
       const used = gameKeyUsing(e.code);
-      if (used) return say(`${keyLabel(e.code)} is the game's ${used} key. Pick another key.`, true);
+      if (used) return refuse(`${keyLabel(e.code)} is the game's ${used} key. Pick another key.`);
       state.key = e.code;
       save();
       stopListening();

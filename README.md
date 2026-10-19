@@ -103,6 +103,7 @@ Mods Tampermonkey runs show up here too:
 | **Cherry Blossom** theme | Switches it on or off live, petals included. |
 | **Blossom V4** theme | Switches it on or off live. |
 | **Fuji Dusk** theme | Switches it on or off live. Its own settings open from the **Settings** button on its card. |
+| **Fuji Dark** theme | Switches it on or off live. It adds itself to the menu. |
 | **Better HUD** | Listed as always on. **Settings** jumps to Better HUD's MODS tab, where its own switches are. |
 | Any mod that registers itself | Turned on or off live. See [For mod authors](#for-mod-authors). |
 
@@ -162,8 +163,9 @@ After each change the menu fires `ssmodmenu:change` on `window`, with `{ id, ena
 ## Changelog
 
 ### 1.3.0 — 2026-10-19
-- **A look for every theme:** Blossom V4 and Cherry Blossom each get a menu look of their own, and the menu stays readable with any theme. Under Blossom V4 its buttons used to be white on white.
+- **A look for every theme:** Blossom V4, Cherry Blossom and the new Fuji Dark theme each get a menu look of their own, and the menu stays readable with any theme. Under Blossom V4 its buttons used to be white on white.
 - **Smoother:** switches slide, the menu fades in and out, and picking a theme fades the whole screen over to it.
+- **Sounds on everything:** every button and switch plays the game's own UI sound for what it does. Buttons click, switches and themes change, **Add script** and **Cancel** switch like the game's tabs, an added script confirms, and removing a script or picking a key that can't be used sounds like the game's resets. Keyboard presses and Esc sound the same as the buttons they stand for.
 - **More fits:** themes sit side by side, and the list fades at the edge when there's more to scroll.
 - **Adding scripts:** the menu shows where a dragged file will go, and **Add** shows a spinner while a script downloads.
 - **Esc** always works while the menu is open, even with another mod's window underneath it.

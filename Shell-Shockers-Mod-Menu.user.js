@@ -1,0 +1,1751 @@
+// ==UserScript==
+// @name         Shell Shockers Mod Menu
+// @namespace    https://github.com/Virojet
+// @version      1.2.0
+// @description  One menu for your Shell Shockers mods. Add any userscript, switch themes and turn mods on or off without reloading.
+// @author       Virojet
+// @license      MIT
+// @homepageURL  https://github.com/Virojet/Shell-Shockers-Mod-Menu
+// @supportURL   https://github.com/Virojet/Shell-Shockers-Mod-Menu/issues
+// @downloadURL  https://raw.githubusercontent.com/Virojet/Shell-Shockers-Mod-Menu/main/Shell-Shockers-Mod-Menu.user.js
+// @updateURL    https://raw.githubusercontent.com/Virojet/Shell-Shockers-Mod-Menu/main/Shell-Shockers-Mod-Menu.user.js
+// @match        *://*.shellshock.io/*
+// @match        *://*.shellgame.me/*
+// @match        *://*.algebra.best/*
+// @match        *://*.algebra.vip/*
+// @match        *://*.biologyclass.club/*
+// @match        *://*.deadlyegg.com/*
+// @match        *://*.deathegg.world/*
+// @match        *://*.eggboy.club/*
+// @match        *://*.eggboy.xyz/*
+// @match        *://*.eggcombat.com/*
+// @match        *://*.egg.dance/*
+// @match        *://*.eggfacts.fun/*
+// @match        *://*.egghead.institute/*
+// @match        *://*.eggisthenewblack.com/*
+// @match        *://*.eggsarecool.com/*
+// @match        *://*.geometry.best/*
+// @match        *://*.geometry.monster/*
+// @match        *://*.geometry.pw/*
+// @match        *://*.geometry.report/*
+// @match        *://*.hardboiled.life/*
+// @match        *://*.hardshell.life/*
+// @match        *://*.humanorganising.org/*
+// @match        *://*.mathactivity.xyz/*
+// @match        *://*.mathactivity.club/*
+// @match        *://*.mathdrills.info/*
+// @match        *://*.mathdrills.life/*
+// @match        *://*.mathfun.rocks/*
+// @match        *://*.mathgames.world/*
+// @match        *://*.math.international/*
+// @match        *://*.mathlete.fun/*
+// @match        *://*.mathlete.pro/*
+// @match        *://*.overeasy.club/*
+// @match        *://*.risenegg.com/*
+// @match        *://*.scrambled.tech/*
+// @match        *://*.scrambled.today/*
+// @match        *://*.scrambled.us/*
+// @match        *://*.scrambled.world/*
+// @match        *://*.shellshockers.club/*
+// @match        *://*.shellshockers.life/*
+// @match        *://*.shellshockers.site/*
+// @match        *://*.shellshockers.us/*
+// @match        *://*.shellshockers.world/*
+// @match        *://*.shellshockers.xyz/*
+// @match        *://*.shellsocks.com/*
+// @match        *://*.softboiled.club/*
+// @match        *://*.urbanegger.com/*
+// @match        *://*.violentegg.club/*
+// @match        *://*.violentegg.fun/*
+// @match        *://*.yolk.best/*
+// @match        *://*.yolk.life/*
+// @match        *://*.yolk.rocks/*
+// @match        *://*.yolk.tech/*
+// @match        *://*.yolk.quest/*
+// @match        *://*.yolk.today/*
+// @match        *://*.zygote.cafe/*
+// @match        *://*.shellshockers.best/*
+// @match        *://*.eggboy.me/*
+// @run-at       document-start
+// @grant        none
+// @noframes
+// ==/UserScript==
+
+/* Mod Menu: one place to switch themes and turn mods on or off, live.
+
+   Any userscript can be added to the menu: a link to its .user.js, its code, or the file. Tampermonkey can't turn
+   one script off from another, so the menu runs the scripts added to it. While a script runs, the menu keeps track
+   of what it does: what it adds to or changes on the page, its listeners, timers and observers, and the globals
+   and built-in functions it replaces. Turning it off stops all of that and puts the page back; turning it on runs
+   it again from the start. GM_* functions are there for them (values, styles, menu commands, and the downloads a
+   site allows). What can't be undone live, like changes a script made to the game while the page loaded, is
+   said on its card with a Reload button.
+
+   Mods it knows when Tampermonkey runs them: the Cherry Blossom, Blossom V4 and Fuji Dusk themes (switched by turning their
+   stylesheets off and hiding what they add) and Better HUD (listed, with a shortcut to its MODS tab; its game
+   patches load with the page, so it can't be switched off live).
+
+   A script can also add itself, with its own on/off code. Run your mod as usual, then:
+     (window.ssModMenuQueue = window.ssModMenuQueue || []).push({
+       id: "my-mod", name: "My Mod", description: "What it does.",
+       group: "mod",                // or "theme": only one theme is on at a time
+       enable() { ... }, disable() { ... },   // must work again and again, without a reload
+     });
+   The queue works whichever script Tampermonkey runs first. If the saved choice is "off", the menu calls
+   disable() right away, before the first paint. Optional: version, defaultOn (false = starts off),
+   active (false = not applied yet), openSettings() (adds a Settings button), alwaysOn (listed, no switch).
+   window.ssModMenu has register, setEnabled, isEnabled, setTheme, list, addScript, removeScript, open and close;
+   it fires "ssmodmenu:change" on window with { id, enabled } after each change. */
+(() => {
+  "use strict";
+  if (window.ssModMenu) return;
+
+  const VERSION = "1.2.0";
+  // Saved before anything can wrap it: the menu's own record of page changes uses it.
+  const NativeMO = window.MutationObserver;
+  const STORE = "ssmm.v1";
+  const DEFAULT_KEY = "Backquote";
+  const byId = id => document.getElementById(id);
+  const sound = name => { try { window.BAWK?.play?.(name); } catch { /* the game's sounds aren't ready yet */ } };
+
+  /* ---- Saved choices ---- */
+  let state;
+  try { state = JSON.parse(localStorage.getItem(STORE)); } catch { /* storage blocked: choices last this visit */ }
+  if (!state || typeof state !== "object" || Array.isArray(state)) state = {};
+  if (!state.on || typeof state.on !== "object") state.on = {};
+  if (typeof state.key !== "string" || !state.key) state.key = DEFAULT_KEY;
+  // A theme that wasn't here on the last visit was just installed, so it takes over. On the very first visit
+  // the first theme found is used.
+  const firstRun = !Array.isArray(state.seen);
+  const seenBefore = new Set(firstRun ? [] : state.seen);
+  if (firstRun) state.seen = [];
+  const save = () => { try { localStorage.setItem(STORE, JSON.stringify(state)); } catch { /* this visit only */ } };
+
+  /* ---- Registry ---- */
+  const mods = new Map();
+  const ID_RE = /^[a-z0-9][a-z0-9._-]{0,47}$/i;
+  const SCRIPT = Symbol("script");
+  const emit = (type, detail) => window.dispatchEvent(new CustomEvent("ssmodmenu:" + type, { detail }));
+  const wanted = m => m.alwaysOn || (m.group === "theme" ? state.theme === m.id : (state.on[m.id] ?? m.def.defaultOn !== false));
+  const activeTheme = () => [...mods.values()].find(m => m.group === "theme" && m.active);
+
+  function apply(m, on) {
+    if (m.alwaysOn || m.active === on) return;
+    try {
+      (on ? m.def.enable : m.def.disable).call(m.def);
+      m.active = on;
+      m.error = "";
+      emit("change", { id: m.id, enabled: on });
+    } catch (err) {
+      m.error = `Couldn't turn it ${on ? "on" : "off"}: ${(err && err.message) || err}`;
+      console.warn("[Mod Menu]", m.name, err);
+      // The saved choice follows what actually happened, so a broken mod isn't retried on every change.
+      if (m.group !== "theme") state.on[m.id] = m.active;
+      else if (on && state.theme === m.id) state.theme = "none";
+      save();
+    }
+  }
+  // Everything that should be off goes off first, so two themes never stack.
+  function sync() {
+    within(MENU, () => {
+      const list = [...mods.values()];
+      for (const m of list) if (!wanted(m)) apply(m, false);
+      for (const m of list) if (wanted(m)) apply(m, true);
+      paint();
+    }, null, []);
+  }
+
+  function register(def) {
+    // A script the menu runs that adds itself joins its own card: its disable() runs before the rest is undone.
+    const run = def && typeof def === "object" && !def[SCRIPT] ? callerRun(true) : null;
+    if (run) return adopt(run, def);
+    const ok = def && typeof def === "object" && ID_RE.test(String(def.id)) &&
+      (def.alwaysOn || (typeof def.enable === "function" && typeof def.disable === "function"));
+    if (!ok) {
+      console.warn("[Mod Menu] A mod needs an id plus enable() and disable().", def);
+      return null;
+    }
+    const id = String(def.id);
+    if (mods.has(id)) return handle(id);
+    const m = {
+      id, def,
+      name: String(def.name || id).slice(0, 60),
+      description: String(def.description || "").slice(0, 220),
+      version: def.version == null ? "" : String(def.version).slice(0, 20),
+      group: def.group === "theme" ? "theme" : "mod",
+      alwaysOn: !!def.alwaysOn,
+      active: def.alwaysOn || def.active !== false,
+      error: "",
+      // Scripts the menu runs: the saved script, its run while it's on, and what its card says about it.
+      script: def[SCRIPT] || null, run: null, warn: "", note: "", reload: false,
+    };
+    mods.set(id, m);
+    if (m.group === "theme" && (state.theme == null || (!firstRun && !seenBefore.has(id)))) state.theme = id;
+    if (!state.seen.includes(id)) state.seen.push(id);
+    save();
+    sync();
+    emit("register", { id });
+    return handle(id);
+  }
+  const handle = id => ({ id, isEnabled: () => isEnabled(id), setEnabled: on => setEnabled(id, on), unregister: () => unregister(id) });
+  function unregister(id) {
+    if (!mods.delete(id)) return false;
+    paint();
+    return true;
+  }
+  function isEnabled(id) {
+    const m = mods.get(id);
+    return !!m && m.active;
+  }
+  function setEnabled(id, on) {
+    const m = mods.get(id);
+    if (!m || m.alwaysOn) return false;
+    if (m.group === "theme") {
+      if (on) state.theme = id;
+      else if (state.theme === id) state.theme = "none";
+    } else state.on[id] = !!on;
+    save();
+    sync();
+    return !m.error;
+  }
+  function setTheme(id) {
+    if (id === "none" || id == null) {
+      state.theme = "none";
+      save();
+      sync();
+      return true;
+    }
+    return mods.get(id)?.group === "theme" && setEnabled(id, true);
+  }
+
+  /* ---- Scripts the menu runs ---- */
+  // Saved apart from the choices above: the list, then each script's code, the files it @requires, its
+  // @resources and its GM values under keys of their own. Code is read synchronously at start-up, so a script set
+  // to run at document-start still runs before the game.
+  const store = {
+    get: k => { try { return localStorage.getItem(k); } catch { return null; } },
+    set: (k, v) => localStorage.setItem(k, v), // throws when storage is full
+    del: k => { try { localStorage.removeItem(k); } catch { /* blocked */ } },
+  };
+  const LIST = "ssmm.scripts";
+  const codeKey = k => "ssmm.code." + k, libKey = k => "ssmm.lib." + k, resKey = k => "ssmm.res." + k, valKey = k => "ssmm.val." + k;
+  let scripts = [];
+  try {
+    const a = JSON.parse(store.get(LIST));
+    if (Array.isArray(a)) scripts = a.filter(s => s && typeof s.key === "string" && typeof s.name === "string");
+  } catch { /* nothing saved yet */ }
+  const saveScripts = () => store.set(LIST, JSON.stringify(scripts));
+
+  // The ==UserScript== block. Translated lines (@name:fr) are skipped.
+  function parseMeta(code) {
+    const meta = { name: "", namespace: "", version: "", description: "", author: "", "run-at": "", match: [], include: [], exclude: [], "exclude-match": [], require: [], resource: [], grant: [] };
+    const block = /\/\/[ \t]*==UserScript==[\s\S]*?\/\/[ \t]*==\/UserScript==/.exec(code);
+    if (!block) return { meta, block: "" };
+    for (const line of block[0].split(/\r?\n/)) {
+      const m = /^\s*\/\/\s*@([\w-]+)(:\S+)?(?:\s+(.*?))?\s*$/.exec(line);
+      if (!m || m[2] || !(m[1] in meta)) continue;
+      const v = m[3] || "";
+      if (Array.isArray(meta[m[1]])) { if (v) meta[m[1]].push(v); } else if (!meta[m[1]]) meta[m[1]] = v;
+    }
+    return { meta, block: block[0] };
+  }
+  const globRe = g => new RegExp("^" + g.replace(/[.+?^${}()|[\]\\]/g, "\\$&").replace(/\*/g, ".*") + "$", "i");
+  function matchPattern(p, u) {
+    if (p === "<all_urls>") return true;
+    const m = /^(\*|[a-z-]+):\/\/(\*|\*\.[^/]+|[^/*]*)(\/.*)?$/i.exec(p);
+    if (!m) return false;
+    const [, scheme, host, path = "/*"] = m;
+    if (scheme === "*" ? !/^https?:$/.test(u.protocol) : u.protocol !== scheme.toLowerCase() + ":") return false;
+    const h = host.toLowerCase();
+    if (h !== "*" && (h.startsWith("*.") ? !(u.hostname === h.slice(2) || u.hostname.endsWith(h.slice(1))) : u.hostname !== h)) return false;
+    return globRe(path).test(u.pathname + u.search);
+  }
+  function includeRule(p, u) {
+    const re = /^\/(.+)\/([a-z]*)$/i.exec(p);
+    if (re) { try { return new RegExp(re[1], re[2]).test(u.href); } catch { return false; } }
+    return globRe(p).test(u.href);
+  }
+  function runsHere(s) {
+    const u = new URL(location.href);
+    if ((s.exclude || []).some(p => includeRule(p, u)) || (s.excludeMatch || []).some(p => matchPattern(p, u))) return false;
+    if (!s.match?.length && !s.include?.length) return true;
+    return (s.match || []).some(p => matchPattern(p, u)) || (s.include || []).some(p => includeRule(p, u));
+  }
+  const hash = str => {
+    let h = 0x811c9dc5;
+    for (let i = 0; i < str.length; i++) { h ^= str.charCodeAt(i); h = Math.imul(h, 0x01000193); }
+    return (h >>> 0).toString(36);
+  };
+  const slug = n => (n.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "") || "script").slice(0, 40);
+  const shortName = n => n.replace(/^\s*shell[\s-]*shockers?\b\s*[-–—:|]?\s*/i, "").trim() || n;
+  const fileName = u => { try { return decodeURIComponent(new URL(u).pathname.split("/").pop()) || u; } catch { return u; } };
+
+  /* Who is running. Each script's code is compiled with its own source name (mm-script:/<run>/...), so the
+     browser's stack says which script made a call, even after an await. The menu's own wrappers on top of the
+     stack are skipped, and the code under them decides:
+     - a page change belongs to the script whose code made it;
+     - a listener, timer or observer belongs to a script only when nothing under the script's code is the page's
+       or another script's. When a script wraps a game function and the game calls it, what the game sets up
+       through the wrapper stays the game's, so turning the script off never stops the game's own loop. */
+  const live = new Set();     // runs that are on
+  const runs = new Map();     // run number → run, while it's on
+  const MENU = { on: false }; // the menu's own code is running: nothing it does belongs to a script
+  let current = null;         // the run whose code is running right now (null: the page's)
+  let nextRun = 1;
+  const RUN_URL = /^mm-script:\/(\d+)\//;
+  const PEEK = 12, DEPTH = 60;
+  const v8 = typeof Error.captureStackTrace === "function";
+  const frameName = f => f.getScriptNameOrSourceURL?.() || f.getFileName?.() || (f.isEval?.() ? "eval" : "");
+  const textNames = text => String(text || "").split("\n").map(l => (/@(.+?)(?::\d+)*$/.exec(l)?.[1] || "").replace(/ line \d+ > .*$/, ""));
+  function stack(depth, prepare) {
+    const keep = Error.prepareStackTrace, limit = Error.stackTraceLimit;
+    try {
+      Error.prepareStackTrace = prepare;
+      Error.stackTraceLimit = depth;
+      return new Error().stack;
+    } finally {
+      Error.prepareStackTrace = keep;
+      Error.stackTraceLimit = limit;
+    }
+  }
+  const selfFile = (v8 && stack(1, (_, frames) => frameName(frames[0]))) || textNames(new Error().stack)[0] || "";
+  const runOf = n => { const m = RUN_URL.exec(n); return m ? runs.get(+m[1]) || null : null; };
+  // names: the stack's source names, top first. Returns undefined when the stack was cut off before it could tell.
+  function ownerOf(names, strict, cut) {
+    let run = null;
+    for (const n of names) {
+      if (!n) continue;
+      if (n === selfFile) {
+        if (run) return run; // the menu called the script: what follows is the script's own call
+        continue;            // the menu's wrappers
+      }
+      const r = runOf(n);
+      if (!r || (run && r !== run)) return null;
+      if (!strict) return r;
+      run = r;
+    }
+    return cut ? undefined : run;
+  }
+  function callerRun(strict) {
+    if (!live.size || current === MENU) return null;
+    if (!v8) return ownerOf(textNames(new Error().stack), strict, false) || null;
+    // A short look settles almost every call (the game's own calls at once); the long one is rarely needed.
+    for (const depth of [PEEK, DEPTH]) {
+      const r = stack(depth, (_, frames) => ownerOf(frames.map(frameName), strict, frames.length >= depth));
+      if (r !== undefined) return r || null;
+    }
+    return null;
+  }
+
+  // Page changes are recorded all the time while a script is on, and handed to the run whose code made them:
+  // the records are taken when its code starts and when it ends. Whatever arrives on its own was the page's.
+  const journal = new NativeMO(() => { /* the page's own changes */ });
+  let journalOn = false;
+  function take(run) {
+    if (!journalOn) return;
+    const recs = journal.takeRecords();
+    if (run && run.on && recs.length) run.note(recs);
+  }
+  // Runs fn as `run`: a script's run, the menu (MENU) or the page (null).
+  function within(run, fn, self, args) {
+    const prev = current;
+    if (prev === run) return Reflect.apply(fn, self, args);
+    take(prev);
+    current = run;
+    try {
+      return Reflect.apply(fn, self, args);
+    } finally {
+      take(run);
+      current = prev;
+      if (run && run !== MENU) wake();
+    }
+  }
+  // Right after a script's code runs, the promise callbacks it started may run (the rest of an async function
+  // after an await). For those few microtasks, every page change is checked for its owner; at other times only
+  // nodes going on or off the page are, which keeps the game's own frequent updates cheap.
+  const microtask = queueMicrotask.bind(window);
+  let awake = 0;
+  const settle = () => { if (awake && --awake) microtask(settle); };
+  function wake() {
+    if (!awake) microtask(settle);
+    awake = 24;
+  }
+  const isMenuNode = n => n === host || n === launcher || n === pageCss;
+
+  const KEEP = 3000; // a script that keeps removing what the game keeps adding: the oldest notes go
+  const trim = map => { if (map.size > KEEP) for (const k of map.keys()) { map.delete(k); if (map.size <= KEEP * 0.8) break; } };
+  const nat = {}; // the browser's own functions, saved before they're wrapped
+  const wrappers = new WeakMap(); // a script's listener → its wrapped copies
+  let scratch = null;
+  function styleMap(text) {
+    scratch ||= document.createElement("div");
+    scratch.setAttribute("style", text || "");
+    const map = new Map(), st = scratch.style;
+    for (let i = 0; i < st.length; i++) map.set(st[i], [st.getPropertyValue(st[i]), st.getPropertyPriority(st[i])]);
+    return map;
+  }
+  // Puts back an attribute or text the script changed, unless someone else changed it since. Classes and inline
+  // styles go back one by one, so the game's own later changes to them stay.
+  function restore(t, e) {
+    if (e.name == null) { if (t.data === e.now) t.data = e.old ?? ""; return; }
+    const now = e.ns ? t.getAttributeNS(e.ns, e.name) : t.getAttribute(e.name);
+    if (now === e.old) return;
+    // An attribute that wasn't there before goes away again once nothing is left in it.
+    const tidy = () => { if (e.old == null && !(t.getAttribute(e.name) || "").trim()) t.removeAttribute(e.name); };
+    if (!e.ns && e.name === "class" && now != null) {
+      const was = new Set((e.old || "").split(/\s+/).filter(Boolean)), set = new Set((e.now || "").split(/\s+/).filter(Boolean));
+      for (const c of set) if (!was.has(c)) t.classList.remove(c);
+      for (const c of was) if (!set.has(c)) t.classList.add(c);
+      return tidy();
+    }
+    if (!e.ns && e.name === "style" && now != null && t.style) {
+      const was = styleMap(e.old), set = styleMap(e.now);
+      for (const p of new Set([...was.keys(), ...set.keys()])) {
+        const a = was.get(p), b = set.get(p);
+        if (a && b && a[0] === b[0] && a[1] === b[1]) continue;
+        if (t.style.getPropertyValue(p) !== (b ? b[0] : "")) continue;
+        if (a) t.style.setProperty(p, a[0], a[1]); else t.style.removeProperty(p);
+      }
+      return tidy();
+    }
+    if (now !== e.now) return;
+    if (e.old == null) e.ns ? t.removeAttributeNS(e.ns, e.name) : t.removeAttribute(e.name);
+    else e.ns ? t.setAttributeNS(e.ns, e.name, e.old) : t.setAttribute(e.name, e.old);
+  }
+
+  // Globals and built-ins a script replaces at start-up are found by comparing these objects before and after it.
+  function watchedObjects() {
+    const W = window, p = name => W[name]?.prototype;
+    const list = [W, document, W.navigator, W.performance, W.console, W.Math, W.JSON, W.Reflect, W.Object, Object.prototype, Function.prototype,
+      Array.prototype, String.prototype, Number.prototype, p("Promise"), p("Date"), p("Map"), p("Set"), p("EventTarget"), p("Node"), p("Element"),
+      p("HTMLElement"), p("Document"), p("HTMLDocument"), p("HTMLCanvasElement"), p("CanvasRenderingContext2D"), p("WebGLRenderingContext"),
+      p("WebGL2RenderingContext"), p("XMLHttpRequest"), p("WebSocket"), p("Response"), p("Storage"), p("HTMLScriptElement"), p("HTMLMediaElement"),
+      p("BaseAudioContext"), p("AudioNode"), p("Event"), p("KeyboardEvent"), p("MouseEvent"), p("Navigator"), p("History"), p("Performance")];
+    return list.filter((o, i) => o && list.indexOf(o) === i);
+  }
+  const snapshot = () => watchedObjects().map(o => [o, new Map(Reflect.ownKeys(o).map(k => [k, Object.getOwnPropertyDescriptor(o, k)]))]);
+  const sameDesc = (a, b) => !!a && !!b && Object.is(a.value, b.value) && a.get === b.get && a.set === b.set &&
+    a.writable === b.writable && a.enumerable === b.enumerable && a.configurable === b.configurable;
+  function changes(before) {
+    const out = [];
+    for (const [obj, was] of before) {
+      for (const key of Reflect.ownKeys(obj)) {
+        const now = Object.getOwnPropertyDescriptor(obj, key), old = was.get(key);
+        if (!sameDesc(old, now)) out.push({ obj, key, was: old, now });
+      }
+      for (const [key, old] of was) if (!Object.prototype.hasOwnProperty.call(obj, key)) out.push({ obj, key, was: old, now: undefined });
+    }
+    return out;
+  }
+  // Hooks that change the game as it loads: what they did stays until a reload.
+  function hooksTheGame(props) {
+    const W = window, deep = new Set([W.XMLHttpRequest?.prototype, W.Response?.prototype, W.HTMLScriptElement?.prototype, W.WebSocket?.prototype, Function.prototype, Object.prototype]);
+    return props.some(p => deep.has(p.obj) || (p.obj === W && (/^(fetch|eval|Function|XMLHttpRequest|WebSocket)$/.test(String(p.key)) || (!p.was && p.now && "get" in p.now))));
+  }
+
+  // One run of a script, from turning it on to turning it off.
+  class Run {
+    constructor(m) {
+      this.n = nextRun++;
+      this.m = m;
+      this.on = true;
+      this.booting = true;
+      this.lateReady = document.readyState !== "loading";
+      this.lateLoad = document.readyState === "complete";
+      this.listeners = new Set();
+      this.timers = new Set();
+      this.intervals = new Set();
+      this.frames = new Set();
+      this.idles = new Set();
+      this.observers = new Set();
+      this.added = new Set();   // nodes it put on the page
+      this.removed = new Map(); // nodes it took off, and where they were
+      this.changed = new Map(); // attributes and text it changed: node → key → { old, now }
+      this.props = [];
+      this.defs = [];           // what it registered with the menu's API
+      this.commands = new Map();
+      this.watchers = new Map();
+      this.hooks = false;
+      this.stuck = false;       // something couldn't be put back
+    }
+    owns(node) {
+      for (let n = node; n; n = n.parentNode || n.host) if (this.added.has(n)) return true;
+      return false;
+    }
+    note(recs) {
+      const touched = [];
+      for (const r of recs) {
+        const t = r.target;
+        if (isMenuNode(t)) continue;
+        if (r.type === "childList") {
+          for (const n of r.removedNodes) {
+            if (this.added.delete(n) || this.removed.has(n) || this.owns(t)) continue;
+            this.removed.set(n, { parent: t, prev: r.previousSibling, next: r.nextSibling });
+          }
+          if (!this.owns(t)) for (const n of r.addedNodes) if (!isMenuNode(n)) this.added.add(n);
+          continue;
+        }
+        if (this.owns(t)) continue;
+        const key = r.type === "attributes" ? (r.attributeNamespace || "") + "|" + r.attributeName : "#text";
+        let map = this.changed.get(t);
+        if (!map) this.changed.set(t, map = new Map());
+        let e = map.get(key);
+        if (!e) map.set(key, e = { name: r.type === "attributes" ? r.attributeName : null, ns: r.attributeNamespace, old: r.oldValue, now: null });
+        touched.push([t, e]);
+      }
+      for (const [t, e] of touched) e.now = e.name == null ? t.data : e.ns ? t.getAttributeNS(e.ns, e.name) : t.getAttribute(e.name);
+      // Its nodes the page took away are forgotten now and then.
+      if (this.added.size > KEEP) for (const n of this.added) if (!n.isConnected) this.added.delete(n);
+      trim(this.removed);
+      trim(this.changed);
+    }
+    stop() {
+      if (!this.on) return;
+      for (const d of this.defs) {
+        if (typeof d.disable === "function") try { within(MENU, d.disable, d, []); } catch (err) { console.warn("[Mod Menu]", this.m.name, err); }
+      }
+      take(current);
+      this.on = false;
+      live.delete(this);
+      runs.delete(this.n);
+      const W = window;
+      for (const id of this.timers) nat.clearTimeout.call(W, id);
+      for (const id of this.intervals) nat.clearInterval.call(W, id);
+      for (const id of this.frames) nat.cancelAnimationFrame.call(W, id);
+      for (const id of this.idles) nat.cancelIdleCallback?.call(W, id);
+      for (const e of this.listeners) {
+        nat.removeEventListener.call(e.target, e.type, e.fn, e.capture);
+        const list = wrappers.get(e.listener), i = list ? list.indexOf(e) : -1;
+        if (i >= 0) list.splice(i, 1);
+      }
+      for (const o of this.observers) try { o.disconnect(); } catch { /* already gone */ }
+      within(MENU, () => { this.undoPage(); this.undoProps(); }, null, []);
+      this.commands.clear();
+      this.watchers.clear();
+      this.defs = [];
+      if (!live.size && journalOn) { journal.disconnect(); journalOn = false; }
+    }
+    undoPage() {
+      // Its nodes come out; what it took out goes back where it was, newest first.
+      for (const n of this.added) if (n.parentNode) nat.removeChild.call(n.parentNode, n);
+      for (const [n, at] of [...this.removed].reverse()) {
+        if (n.isConnected) continue;
+        const ref = at.next?.parentNode === at.parent ? at.next : at.prev?.parentNode === at.parent ? at.prev.nextSibling : null;
+        try { nat.insertBefore.call(at.parent, n, ref); } catch { this.stuck = true; }
+      }
+      for (const [t, map] of this.changed) for (const e of map.values()) try { restore(t, e); } catch { this.stuck = true; }
+      this.added.clear();
+      this.removed.clear();
+      this.changed.clear();
+    }
+    undoProps() {
+      for (const { obj, key, was, now } of this.props.slice().reverse()) {
+        const cur = Object.getOwnPropertyDescriptor(obj, key);
+        try {
+          if (!now) { if (!cur && was) Object.defineProperty(obj, key, was); continue; } // it deleted something
+          if (!cur) continue;
+          const trap = "get" in now || "set" in now;
+          if (!was && !trap) { if (!("get" in cur)) delete obj[key]; continue; }   // a global of its own
+          if (!sameDesc(cur, now)) { this.stuck = true; continue; }                 // replaced again since
+          if (was) { Object.defineProperty(obj, key, was); continue; }
+          // A trap it set for something the game adds later: the game's value stays, the trap goes.
+          const v = cur.get ? cur.get.call(obj) : undefined;
+          delete obj[key];
+          if (v !== undefined) { obj[key] = v; this.stuck = true; }
+        } catch { this.stuck = true; }
+      }
+      this.props = [];
+    }
+  }
+
+  // Wraps the browser functions scripts use to listen, wait, observe and change the page. When no script the
+  // menu runs is on, each wrapper just calls through.
+  let patched = false;
+  function patchPage() {
+    if (patched) return;
+    patched = true;
+    const W = window, ET = EventTarget.prototype;
+    const swap = (obj, key, wrap) => {
+      const d = obj && Object.getOwnPropertyDescriptor(obj, key);
+      if (!d || !d.configurable) return;
+      if (typeof d.value === "function") {
+        const fn = wrap(d.value);
+        Object.defineProperty(fn, "name", { value: key });
+        Object.defineProperty(obj, key, { ...d, value: fn });
+      } else if (d.set) {
+        const set = wrap(d.set);
+        Object.defineProperty(set, "name", { value: "set " + key });
+        Object.defineProperty(obj, key, { ...d, set });
+      }
+    };
+    Object.assign(nat, {
+      removeEventListener: ET.removeEventListener, clearTimeout: W.clearTimeout, clearInterval: W.clearInterval,
+      cancelAnimationFrame: W.cancelAnimationFrame, cancelIdleCallback: W.cancelIdleCallback, setTimeout: W.setTimeout,
+      removeChild: Node.prototype.removeChild, insertBefore: Node.prototype.insertBefore,
+    });
+
+    const captureOf = o => typeof o === "boolean" ? o : !!(o && o.capture);
+    swap(ET, "addEventListener", add => function (type, listener, options) {
+      const target = this ?? W;
+      const run = listener && (typeof listener === "function" || typeof listener === "object") ? callerRun(true) : null;
+      if (!run) return add.call(target, type, listener, options);
+      type = String(type);
+      const capture = captureOf(options);
+      let list = wrappers.get(listener);
+      if (!list) wrappers.set(listener, list = []);
+      let e = list.find(x => x.target === target && x.type === type && x.capture === capture);
+      if (!e) {
+        e = { run, target, type, capture, listener };
+        e.fn = function (ev) {
+          if (!run.on) return;
+          const fn = typeof listener === "function" ? listener : listener.handleEvent;
+          if (typeof fn === "function") return within(run, fn, typeof listener === "function" ? this : listener, [ev]);
+        };
+        list.push(e);
+        run.listeners.add(e);
+      }
+      add.call(target, type, e.fn, options);
+      // Turned on after the page loaded: it still gets the start-up events it waits for.
+      if (run.booting && ((type === "DOMContentLoaded" && run.lateReady && (target === document || target === W)) || (type === "load" && run.lateLoad && target === W))) {
+        nat.setTimeout.call(W, () => { if (run.on && run.listeners.has(e)) e.fn.call(target, new Event(type)); });
+      }
+    });
+    swap(ET, "removeEventListener", remove => function (type, listener, options) {
+      const target = this ?? W, list = listener && wrappers.get(listener), t = String(type), capture = captureOf(options);
+      const i = list ? list.findIndex(x => x.target === target && x.type === t && x.capture === capture) : -1;
+      if (i < 0) return remove.call(target, type, listener, options);
+      const [e] = list.splice(i, 1);
+      e.run.listeners.delete(e);
+      return remove.call(target, type, e.fn, options);
+    });
+
+    const ownFn = fn => typeof fn === "function" ? callerRun(true) : null;
+    swap(W, "setTimeout", set => function (fn, ms, ...args) {
+      const run = ownFn(fn);
+      if (!run) return set.call(W, fn, ms, ...args);
+      const id = set.call(W, () => { run.timers.delete(id); if (run.on) within(run, fn, W, args); }, ms);
+      run.timers.add(id);
+      return id;
+    });
+    swap(W, "setInterval", set => function (fn, ms, ...args) {
+      const run = ownFn(fn);
+      if (!run) return set.call(W, fn, ms, ...args);
+      const id = set.call(W, () => { if (run.on) within(run, fn, W, args); }, ms);
+      run.intervals.add(id);
+      return id;
+    });
+    swap(W, "requestAnimationFrame", set => function (fn) {
+      const run = ownFn(fn);
+      if (!run) return set.call(W, fn);
+      const id = set.call(W, t => { run.frames.delete(id); if (run.on) within(run, fn, W, [t]); });
+      run.frames.add(id);
+      return id;
+    });
+    swap(W, "requestIdleCallback", set => function (fn, opts) {
+      const run = ownFn(fn);
+      if (!run) return set.call(W, fn, opts);
+      const id = set.call(W, d => { run.idles.delete(id); if (run.on) within(run, fn, W, [d]); }, opts);
+      run.idles.add(id);
+      return id;
+    });
+    swap(W, "queueMicrotask", set => function (fn) {
+      const run = ownFn(fn);
+      return set.call(W, run ? () => { if (run.on) within(run, fn, W, []); } : fn);
+    });
+
+    for (const name of ["MutationObserver", "ResizeObserver", "IntersectionObserver", "PerformanceObserver", "ReportingObserver"]) {
+      const Native = W[name], d = Object.getOwnPropertyDescriptor(W, name);
+      if (typeof Native !== "function" || !d?.configurable) continue;
+      const Observer = function (cb, ...rest) {
+        if (!new.target) return Reflect.apply(Native, this, [cb, ...rest]); // throws, like the real one
+        const run = ownFn(cb);
+        const obs = Reflect.construct(Native, [run ? function (...a) { if (run.on) return within(run, cb, this, a); } : cb, ...rest], new.target === Observer ? Native : new.target);
+        if (run) run.observers.add(obs);
+        return obs;
+      };
+      Observer.prototype = Native.prototype;
+      Object.defineProperty(Observer, "name", { value: name });
+      Object.defineProperty(Observer, "length", { value: Native.length });
+      Object.defineProperty(W, name, { ...d, value: Observer });
+    }
+
+    // Each change goes on the record of whoever's code made it: a script's after an await or in a promise
+    // callback, and the game's when a script's code calls into the game. Changes off the page (to nodes not in
+    // the document yet) aren't recorded, so they aren't checked either.
+    const viaRun = light => f => function (...a) {
+      if (!live.size || current === MENU || (light && !current && !awake) || this?.isConnected === false) return Reflect.apply(f, this, a);
+      const run = callerRun(false);
+      return run === current ? Reflect.apply(f, this, a) : within(run, f, this, a);
+    };
+    const each = (proto, light, keys) => { if (proto) for (const k of keys) swap(proto, k, viaRun(light)); };
+    // Nodes going on or off the page: always checked.
+    each(Node.prototype, false, ["appendChild", "insertBefore", "removeChild", "replaceChild"]);
+    each(Element.prototype, false, ["append", "prepend", "before", "after", "replaceWith", "replaceChildren", "remove", "insertAdjacentElement",
+      "insertAdjacentHTML", "insertAdjacentText", "innerHTML", "outerHTML"]);
+    each(W.CharacterData?.prototype, false, ["before", "after", "replaceWith", "remove"]);
+    each(Document.prototype, false, ["append", "prepend", "replaceChildren"]);
+    // Text, attributes, classes and styles: what the game changes most often, checked only right after a script ran.
+    each(Node.prototype, true, ["textContent", "nodeValue"]);
+    each(Element.prototype, true, ["setAttribute", "setAttributeNS", "removeAttribute", "removeAttributeNS", "toggleAttribute", "className", "id"]);
+    each(W.CharacterData?.prototype, true, ["data", "appendData", "insertData", "deleteData", "replaceData"]);
+    each(Document.prototype, true, ["title"]);
+    each(HTMLElement.prototype, true, ["innerText", "outerText", "hidden", "title", "style"]);
+    each(DOMTokenList.prototype, true, ["add", "remove", "toggle", "replace", "value"]);
+    each(CSSStyleDeclaration.prototype, true, ["setProperty", "removeProperty", "cssText", "display", "visibility", "opacity", "pointerEvents", "zIndex", "position",
+      "top", "left", "right", "bottom", "width", "height", "transform", "filter", "background", "backgroundColor", "backgroundImage", "color", "fontSize"]);
+  }
+
+  /* GM_* functions for the scripts the menu runs, close to Tampermonkey's. Values are kept per script. Downloads
+     go through the page, so they only reach sites that allow it. */
+  const API_NAMES = ["GM_info", "GM_getValue", "GM_setValue", "GM_deleteValue", "GM_listValues", "GM_getValues", "GM_setValues", "GM_deleteValues",
+    "GM_addValueChangeListener", "GM_removeValueChangeListener", "GM_addStyle", "GM_addElement", "GM_xmlhttpRequest", "GM_registerMenuCommand",
+    "GM_unregisterMenuCommand", "GM_setClipboard", "GM_openInTab", "GM_notification", "GM_getResourceText", "GM_getResourceURL", "GM_log", "GM", "unsafeWindow"];
+  function gmRequest(run, d) {
+    d = d || {};
+    const ctrl = new AbortController();
+    let timer = 0, done = false;
+    const call = (name, res) => {
+      const f = d[name];
+      if (typeof f === "function" && run.on) try { within(run, f, d, [res]); } catch (err) { console.error(err); }
+    };
+    const fail = (name, error) => {
+      if (done) return;
+      done = true;
+      const res = { readyState: 4, status: 0, statusText: "", finalUrl: String(d.url), responseHeaders: "", response: null, responseText: "", error, context: d.context };
+      call(name, res);
+      call("onloadend", res);
+    };
+    if (d.timeout > 0) timer = setTimeout(() => { fail("ontimeout", "timeout"); ctrl.abort(); }, d.timeout);
+    (async () => {
+      try {
+        const r = await fetch(d.url, { method: d.method || "GET", headers: d.headers, body: d.data, signal: ctrl.signal, credentials: d.anonymous ? "omit" : "same-origin" });
+        let response, text = "";
+        if (d.responseType === "arraybuffer") response = await r.arrayBuffer();
+        else if (d.responseType === "blob") response = await r.blob();
+        else {
+          response = text = await r.text();
+          if (d.responseType === "json") try { response = JSON.parse(text); } catch { response = undefined; }
+          else if (d.responseType === "document") response = new DOMParser().parseFromString(text, "text/html");
+        }
+        if (done) return;
+        done = true;
+        clearTimeout(timer);
+        const res = { readyState: 4, status: r.status, statusText: r.statusText, finalUrl: r.url, responseHeaders: [...r.headers].map(([k, v]) => k + ": " + v).join("\r\n"),
+          response, responseText: text, responseXML: null, context: d.context };
+        call("onreadystatechange", res);
+        call("onload", res);
+        call("onloadend", res);
+      } catch (err) {
+        clearTimeout(timer);
+        fail(err?.name === "AbortError" ? "onabort" : "onerror", `The request was blocked or failed: ${err?.message || err}`);
+      }
+    })();
+    return { abort() { ctrl.abort(); } };
+  }
+  function gmApi(run) {
+    const s = run.m.script, vk = valKey(s.key);
+    const values = () => { try { const v = JSON.parse(store.get(vk)); return v && typeof v === "object" ? v : {}; } catch { return {}; } };
+    const keep = v => { try { store.set(vk, JSON.stringify(v)); } catch (err) { console.warn("[Mod Menu]", s.name, "couldn't save a value:", err); } };
+    const tell = (k, old, now) => { for (const w of run.watchers.values()) if (w.key === k) try { w.fn(k, old, now, false); } catch (err) { console.error(err); } };
+    const getValue = (k, d) => { const v = values(); return Object.prototype.hasOwnProperty.call(v, k) ? v[k] : d; };
+    const setValue = (k, val) => { const v = values(), old = v[k]; v[k] = val; keep(v); tell(k, old, val); };
+    const deleteValue = k => { const v = values(), old = v[k]; delete v[k]; keep(v); tell(k, old, undefined); };
+    const listValues = () => Object.keys(values());
+    const getValues = keys => {
+      const v = values();
+      if (Array.isArray(keys)) return Object.fromEntries(keys.filter(k => k in v).map(k => [k, v[k]]));
+      if (keys && typeof keys === "object") return Object.fromEntries(Object.entries(keys).map(([k, d]) => [k, k in v ? v[k] : d]));
+      return v;
+    };
+    const setValues = obj => { for (const [k, val] of Object.entries(obj || {})) setValue(k, val); };
+    const deleteValues = keys => { for (const k of keys || []) deleteValue(k); };
+    let watch = 0, cmd = 0;
+    const addValueChangeListener = (key, fn) => { run.watchers.set(++watch, { key, fn }); return watch; };
+    const removeValueChangeListener = id => { run.watchers.delete(id); };
+    const addStyle = css => within(run, () => {
+      const st = document.createElement("style");
+      st.textContent = String(css);
+      (document.head || document.documentElement).appendChild(st);
+      return st;
+    }, null, []);
+    const addElement = (parent, tag, attrs) => {
+      if (typeof parent === "string") { attrs = tag; tag = parent; parent = null; }
+      return within(run, () => {
+        const n = document.createElement(tag);
+        for (const [k, v] of Object.entries(attrs || {})) k === "textContent" || k === "innerHTML" ? (n[k] = v) : n.setAttribute(k, v);
+        (parent || document.head || document.documentElement).appendChild(n);
+        return n;
+      }, null, []);
+    };
+    const registerMenuCommand = (caption, fn, opts) => {
+      const id = opts && typeof opts === "object" && opts.id != null ? opts.id : ++cmd;
+      run.commands.set(String(id), { caption: String(caption).slice(0, 40), fn });
+      paint();
+      return id;
+    };
+    const unregisterMenuCommand = id => { run.commands.delete(String(id)); paint(); };
+    const setClipboard = text => { navigator.clipboard?.writeText(String(text)).catch(() => { /* not allowed right now */ }); };
+    const openInTab = url => { window.open(url, "_blank", "noopener"); return { close() { }, closed: false }; };
+    const notification = (d, title) => { const text = d && typeof d === "object" ? d.text || d.title : d || title; if (text) toast(`${run.m.name}: ${text}`); };
+    let res = {};
+    try { res = JSON.parse(store.get(resKey(s.key))) || {}; } catch { /* none */ }
+    const getResourceURL = name => res[name] || null;
+    const getResourceText = name => {
+      const u = res[name];
+      if (!u) return null;
+      try { return new TextDecoder().decode(Uint8Array.from(atob(u.slice(u.indexOf(",") + 1)), c => c.charCodeAt(0))); } catch { return null; }
+    };
+    const info = {
+      script: { name: s.name, namespace: s.namespace, version: s.version, description: s.description, author: s.author, matches: s.match || [], includes: s.include || [],
+        excludes: s.exclude || [], "run-at": s.runAt, grant: s.grant || [], resources: Object.keys(res).map(name => ({ name })) },
+      scriptMetaStr: s.meta || "", scriptHandler: "Mod Menu", version: VERSION,
+    };
+    const xmlhttpRequest = d => gmRequest(run, d);
+    const later = f => (...a) => { try { return Promise.resolve(f(...a)); } catch (err) { return Promise.reject(err); } };
+    const GM = Object.freeze({
+      info, getValue: later(getValue), setValue: later(setValue), deleteValue: later(deleteValue), listValues: later(listValues),
+      getValues: later(getValues), setValues: later(setValues), deleteValues: later(deleteValues),
+      addValueChangeListener: later(addValueChangeListener), removeValueChangeListener: later(removeValueChangeListener),
+      addStyle: later(addStyle), addElement: later(addElement), registerMenuCommand: later(registerMenuCommand), unregisterMenuCommand: later(unregisterMenuCommand),
+      setClipboard: later(setClipboard), openInTab: later(openInTab), notification: later(notification), getResourceUrl: later(getResourceURL),
+      getResourceText: later(getResourceText), log: console.log.bind(console),
+      xmlHttpRequest(d = {}) {
+        let h;
+        const p = new Promise((ok, no) => {
+          const pass = (name, end) => r => { if (typeof d[name] === "function") d[name](r); end(r); };
+          h = xmlhttpRequest({ ...d, onload: pass("onload", ok), onerror: pass("onerror", no), ontimeout: pass("ontimeout", no), onabort: pass("onabort", no) });
+        });
+        p.abort = () => h.abort();
+        return p;
+      },
+    });
+    return {
+      GM_info: info, GM_getValue: getValue, GM_setValue: setValue, GM_deleteValue: deleteValue, GM_listValues: listValues, GM_getValues: getValues,
+      GM_setValues: setValues, GM_deleteValues: deleteValues, GM_addValueChangeListener: addValueChangeListener, GM_removeValueChangeListener: removeValueChangeListener,
+      GM_addStyle: addStyle, GM_addElement: addElement, GM_xmlhttpRequest: xmlhttpRequest, GM_registerMenuCommand: registerMenuCommand,
+      GM_unregisterMenuCommand: unregisterMenuCommand, GM_setClipboard: setClipboard, GM_openInTab: openInTab, GM_notification: notification,
+      GM_getResourceText: getResourceText, GM_getResourceURL: getResourceURL, GM_log: console.log.bind(console), GM, unsafeWindow: window,
+    };
+  }
+
+  // Scripts that run later than document-start wait for the page to be parsed, as in Tampermonkey.
+  const pendingStart = new Set();
+  let booted = false;
+  function startScript(m) {
+    const s = m.script;
+    m.warn = m.note = "";
+    m.reload = false;
+    if (!runsHere(s)) { m.note = "It isn't set to run on this site."; return; }
+    if (document.readyState === "loading" && s.runAt !== "document-start") { pendingStart.add(m); return; }
+    const code = store.get(codeKey(s.key));
+    if (code == null) throw new Error("its code is missing. Remove it and add it again");
+    patchPage();
+    const run = new Run(m);
+    let fn;
+    try {
+      fn = new Function(...API_NAMES, `${store.get(libKey(s.key)) || ""}\n${code}\n//# sourceURL=mm-script:/${run.n}/${slug(s.name)}.user.js`);
+    } catch (err) {
+      throw new Error(`its code has an error: ${err.message}`);
+    }
+    runs.set(run.n, run);
+    live.add(run);
+    m.run = run;
+    if (!journalOn) {
+      journal.observe(document, { childList: true, subtree: true, attributes: true, attributeOldValue: true, characterData: true, characterDataOldValue: true });
+      journalOn = true;
+    }
+    const api = gmApi(run), before = snapshot();
+    try {
+      within(run, fn, window, API_NAMES.map(k => api[k]));
+    } catch (err) {
+      m.warn = `It hit an error while starting: ${(err && err.message) || err}`;
+      console.error("[Mod Menu]", s.name, err);
+    }
+    run.booting = false;
+    run.props = changes(before);
+    run.hooks = hooksTheGame(run.props);
+    if (run.hooks && booted) {
+      m.note = "Parts of it start with the page. Reload to start them.";
+      m.reload = true;
+    }
+  }
+  function stopScript(m) {
+    if (pendingStart.delete(m)) return;
+    const run = m.run;
+    m.run = null;
+    m.warn = "";
+    if (!run) return;
+    run.stop();
+    m.reload = run.hooks || run.stuck;
+    m.note = m.reload ? "Some of its changes stay until you reload." : "";
+  }
+  function runPending() {
+    for (const m of [...pendingStart]) {
+      pendingStart.delete(m);
+      try {
+        startScript(m);
+      } catch (err) {
+        m.active = false;
+        m.error = `Couldn't turn it on: ${(err && err.message) || err}`;
+        console.warn("[Mod Menu]", m.name, err);
+      }
+    }
+    paint();
+  }
+  function adopt(run, def) {
+    run.defs.push(def);
+    if (def.active === false && typeof def.enable === "function") {
+      try { within(run, def.enable, def, []); } catch (err) { console.warn("[Mod Menu]", run.m.name, err); }
+    }
+    paint();
+    const id = run.m.id;
+    return { id, isEnabled: () => isEnabled(id), setEnabled: on => setEnabled(id, on), unregister: () => { run.defs = run.defs.filter(d => d !== def); paint(); return true; } };
+  }
+  function scriptDef(s) {
+    return {
+      id: "us." + s.key, name: shortName(s.name), version: s.version, group: s.group, active: false,
+      description: s.description || (s.from ? `Added from ${fileName(s.from)}.` : "A script you added."),
+      enable() { startScript(mods.get(this.id)); },
+      disable() { stopScript(mods.get(this.id)); },
+      [SCRIPT]: s,
+    };
+  }
+
+  // A Greasy Fork page link is looked up, and a GitHub file page becomes its raw file.
+  async function download(url) {
+    let u = url.trim();
+    const gf = /^https?:\/\/(?:www\.)?(greasyfork|sleazyfork)\.org\/(?:[\w-]+\/)?scripts\/(\d+)(?:-[^/?#]*)?\/?(?:[?#].*)?$/i.exec(u);
+    if (gf) {
+      try {
+        const r = await fetch(`https://${gf[1].toLowerCase()}.org/scripts/${gf[2]}.json`, { credentials: "omit" });
+        u = (r.ok && (await r.json()).code_url) || "";
+      } catch { u = ""; }
+      if (!u) throw new Error("Couldn't look up that Greasy Fork script. Open it, copy all of its code, and paste it here.");
+    }
+    const gh = /^https?:\/\/github\.com\/([^/]+)\/([^/]+)\/(?:blob|raw)\/(.+)$/i.exec(u);
+    if (gh) u = `https://raw.githubusercontent.com/${gh[1]}/${gh[2]}/${gh[3]}`;
+    let r;
+    try {
+      r = await fetch(u, { credentials: "omit", cache: "no-cache" });
+    } catch {
+      throw new Error("That site doesn't let the game download from it. Open the link, copy all of the code, and paste it here.");
+    }
+    if (!r.ok) throw new Error(`The download failed (error ${r.status}). Check the link.`);
+    return r.text();
+  }
+  const dataUrl = blob => new Promise((ok, no) => { const fr = new FileReader(); fr.onload = () => ok(fr.result); fr.onerror = () => no(fr.error); fr.readAsDataURL(blob); });
+
+  // Adds a script from a link or its code, or updates one already added (same @name and @namespace). It's
+  // turned on right away.
+  async function addScript(source) {
+    let code = String(source ?? "").trim(), from = "";
+    if (!code) throw new Error("Paste a link or a script first.");
+    if (/^https?:\/\/\S+$/i.test(code)) { from = code; code = await download(code); }
+    if (/^\s*<(?:!doctype|html)/i.test(code)) throw new Error("That link opens a web page, not a script. Use the link to the .user.js file.");
+    const { meta, block } = parseMeta(code);
+    if (/^shell shockers mod menu$/i.test(meta.name)) throw new Error("That's the Mod Menu itself.");
+    const name = meta.name.slice(0, 120) || "Pasted script";
+    const key = hash(block ? meta.namespace + "\n" + name : code);
+    let lib = "";
+    for (const u of meta.require) {
+      try { lib += (await download(u)) + "\n;\n"; } catch (err) { throw new Error(`Couldn't download ${fileName(u)}, a file it needs. ${err.message}`); }
+    }
+    const res = {};
+    for (const line of meta.resource) {
+      const [, rn, ru] = /^(\S+)\s+(\S+)/.exec(line) || [];
+      if (!rn) continue;
+      try {
+        const r = await fetch(ru, { credentials: "omit" });
+        if (!r.ok) throw new Error(String(r.status));
+        res[rn] = await dataUrl(await r.blob());
+      } catch { throw new Error(`Couldn't download ${fileName(ru)}, a file it needs.`); }
+    }
+    try { new Function(...API_NAMES, lib + "\n" + code); } catch (err) { throw new Error(`Its code has an error: ${err.message}`); }
+    const s = {
+      key, name, namespace: meta.namespace, version: meta.version.slice(0, 24), description: meta.description.slice(0, 300), author: meta.author,
+      runAt: meta["run-at"] || "document-idle", match: meta.match, include: meta.include, exclude: meta.exclude, excludeMatch: meta["exclude-match"],
+      grant: meta.grant, group: /theme/i.test(name) ? "theme" : "mod", from, meta: block.slice(0, 6000),
+    };
+    const id = "us." + key, old = mods.get(id);
+    if (old) apply(old, false);
+    const list = scripts.filter(x => x.key !== key);
+    const at = scripts.findIndex(x => x.key === key);
+    list.splice(at < 0 ? list.length : at, 0, s);
+    try {
+      store.set(codeKey(key), code);
+      if (lib) store.set(libKey(key), lib); else store.del(libKey(key));
+      if (Object.keys(res).length) store.set(resKey(key), JSON.stringify(res)); else store.del(resKey(key));
+      store.set(LIST, JSON.stringify(list));
+    } catch {
+      if (!old) [codeKey, libKey, resKey].forEach(k => store.del(k(key)));
+      if (old) sync();
+      throw new Error("There's no room left to save it. Remove a script you don't use, then try again.");
+    }
+    scripts = list;
+    if (old) mods.delete(id);
+    state.on[id] = true;
+    if (s.group === "theme") state.theme = id;
+    save();
+    register(scriptDef(s));
+    return id;
+  }
+  function removeScript(id) {
+    const m = mods.get(id);
+    if (!m?.script) return false;
+    apply(m, false);
+    pendingStart.delete(m);
+    const key = m.script.key;
+    [codeKey, libKey, resKey, valKey].forEach(k => store.del(k(key)));
+    scripts = scripts.filter(x => x.key !== key);
+    try { saveScripts(); } catch { /* the list only got shorter */ }
+    delete state.on[id];
+    if (state.theme === id) state.theme = "none";
+    state.seen = state.seen.filter(x => x !== id);
+    save();
+    mods.delete(id);
+    sync();
+    return true;
+  }
+
+  /* ---- Known mods ---- */
+  // These scripts don't know about the menu, so they're switched from the outside: their stylesheet is turned
+  // off with media="not all", and what they add to the page is hidden by a class on <html>.
+  const root = () => document.documentElement;
+  const styleOff = (id, off) => {
+    const s = byId(id);
+    if (s) off ? s.setAttribute("media", "not all") : s.removeAttribute("media");
+  };
+  const inMatchView = () => {
+    const app = byId("app");
+    return !!app && (app.classList.contains("game-screen") || app.classList.contains("photo-booth"));
+  };
+  // Fuji Dusk shows its corner button again on every screen change, and Right Shift opens its dialog while the
+  // button isn't hidden, so while the theme is off the button is kept hidden.
+  function hideFujiButton() {
+    const c = byId("fuji-dusk-controls");
+    if (!c) return;
+    c.shadowRoot?.querySelector("dialog[open]")?.close();
+    c.hidden = true;
+  }
+  const fujiWatch = new MutationObserver(() => {
+    const c = byId("fuji-dusk-controls");
+    if (c && !c.hidden && mods.get("fuji-dusk")?.active === false) c.hidden = true;
+  });
+
+  const known = [
+    {
+      marker: "ss-sakura-style",
+      def: {
+        id: "cherry-blossom", name: "Cherry Blossom", group: "theme",
+        description: "Pink and plum menus with petals drifting down.",
+        enable() { styleOff("ss-sakura-style", false); root().classList.remove("ssmm-off-cherry-blossom"); },
+        disable() { styleOff("ss-sakura-style", true); root().classList.add("ssmm-off-cherry-blossom"); },
+      },
+    },
+    {
+      marker: "blossom-v4-style",
+      def: {
+        id: "blossom-v4", name: "Blossom V4", group: "theme",
+        description: "Black and pink menus over cherry blossom art, with a pink HUD.",
+        enable() { styleOff("blossom-v4-style", false); },
+        disable() { styleOff("blossom-v4-style", true); },
+      },
+    },
+    {
+      marker: "fuji-dusk-style",
+      def: {
+        id: "fuji-dusk", name: "Fuji Dusk", group: "theme",
+        description: "Slate glass panels and amber accents over a photo of Mount Fuji.",
+        enable() {
+          styleOff("fuji-dusk-style", false);
+          root().classList.add("fd-theme");
+          root().classList.remove("ssmm-off-fuji-dusk");
+          const c = byId("fuji-dusk-controls");
+          if (c) c.hidden = inMatchView();
+        },
+        disable() {
+          styleOff("fuji-dusk-style", true);
+          root().classList.remove("fd-theme");
+          root().classList.add("ssmm-off-fuji-dusk");
+          hideFujiButton();
+        },
+        openSettings() {
+          const c = byId("fuji-dusk-controls");
+          if (!c || c.hidden) return false;
+          c.shadowRoot?.querySelector(".trigger")?.click();
+          return true;
+        },
+      },
+    },
+  ];
+
+  // What a script the menu runs puts on the page is already on that script's card.
+  const fromScript = node => [...live].some(r => r.owns(node));
+  function findBetterHud() {
+    if (mods.has("better-hud") || !window.SSB_VERSION || !window.__ssbSettings) return;
+    if ([...mods.values()].some(m => m.script && /better[\s-]*(hud|ui)/i.test(m.script.name)) ||
+      [...live].some(r => r.props.some(p => p.obj === window && p.key === "__ssbSettings"))) return;
+    register({
+      id: "better-hud", name: "Better HUD", version: window.SSB_VERSION, alwaysOn: true,
+      description: "Always on: it patches the game as the page loads. Its own switches are in Settings ▸ MODS.",
+      openSettings() {
+        if (typeof window.vueApp?.showSettingsPopup !== "function") return false;
+        window.vueApp.showSettingsPopup();
+        let tries = 0;
+        const t = setInterval(() => {
+          const tab = byId("mod-settings-tab");
+          if (tab || ++tries > 40) { clearInterval(t); tab?.click(); }
+        }, 50);
+        return true;
+      },
+    });
+  }
+
+  const watched = new WeakSet();
+  const watcher = new MutationObserver(scan);
+  function scan() {
+    for (const k of known) {
+      const mark = !k.found && byId(k.marker);
+      if (mark && !fromScript(mark)) { k.found = true; register(k.def); }
+    }
+    // Only direct children are watched: the themes add their stylesheets to <html> or <head>, and their
+    // extras to <body>, so the game's own DOM churn never wakes this up.
+    for (const el of [document.documentElement, document.head, document.body]) {
+      if (el && !watched.has(el)) { watched.add(el); watcher.observe(el, { childList: true }); }
+    }
+    const c = byId("fuji-dusk-controls");
+    if (c && !watched.has(c)) {
+      watched.add(c);
+      fujiWatch.observe(c, { attributes: true, attributeFilter: ["hidden"] });
+      if (mods.get("fuji-dusk")?.active === false) hideFujiButton();
+    }
+  }
+
+  /* ---- Public API ---- */
+  window.ssModMenu = Object.freeze({
+    version: VERSION,
+    register, unregister, isEnabled, setEnabled, setTheme, addScript, removeScript,
+    getTheme: () => activeTheme()?.id || "none",
+    list: () => [...mods.values()].map(m => ({ id: m.id, name: m.name, group: m.group, version: m.version, enabled: m.active, alwaysOn: m.alwaysOn, script: !!m.script })),
+    open: () => open(), close: () => close(), toggle: () => toggle(),
+  });
+  const queued = Array.isArray(window.ssModMenuQueue) ? window.ssModMenuQueue : [];
+  window.ssModMenuQueue = { push: (...defs) => { defs.forEach(register); return mods.size; } };
+
+  /* ---- Menu ---- */
+  const CSS = `
+    :host { all: initial; }
+    :host {
+      --mm-size: clamp(13px, 1.48vh, 40px);
+      --mm-font: "Nunito", system-ui, sans-serif;
+      --mm-ink: var(--ss-blue5, #0C576F);
+      --mm-sub: color-mix(in srgb, var(--mm-ink) 74%, transparent);
+      --mm-head: #fff;
+      --mm-head-sub: rgba(255, 255, 255, .9);
+      --mm-panel: linear-gradient(to bottom, var(--ss-blue8, #1192BC), var(--ss-blue6, #8dd3ea));
+      --mm-frame: var(--ss-blue5, #0C576F);
+      --mm-glass: rgba(255, 255, 255, .24);
+      --mm-glass-hi: rgba(255, 255, 255, .42);
+      --mm-glass-on: rgba(255, 255, 255, .4);
+      --mm-edge: rgba(255, 255, 255, .5);
+      --mm-line: rgba(255, 255, 255, .35);
+      --mm-track: color-mix(in srgb, var(--mm-ink) 22%, transparent);
+      --mm-on: linear-gradient(180deg, #ffb23f, #ff961d);
+      --mm-on-edge: #cf700c;
+      --mm-on-ring: rgba(255, 152, 31, .6);
+      --mm-bar: linear-gradient(180deg, color-mix(in srgb, var(--ss-blue0, #c8edf8) 45%, rgba(255, 255, 255, .75)), color-mix(in srgb, var(--ss-blue0, #c8edf8) 70%, rgba(255, 255, 255, .8)));
+      --mm-toast: color-mix(in srgb, var(--ss-blue0, #c8edf8) 35%, rgba(255, 255, 255, .97));
+      --mm-btn: rgba(255, 255, 255, .7);
+      --mm-err: #a3231a;
+      --mm-backdrop: rgba(4, 34, 46, .45);
+      --mm-lift: 0 1.4em 3.6em rgba(6, 44, 60, .38);
+      --mm-title-font: 400 1.375em/1.15 "Sigmar One", var(--mm-font);
+      --mm-title-shadow: .15em .15em 0 color-mix(in srgb, var(--ss-blue3, #0B93BD) 90%, transparent);
+    }
+    /* Fuji Dusk paints with its own tokens, which reach in here from <html>. */
+    :host([data-skin="fuji-dusk"]) {
+      --mm-ink: var(--fd-text, #f4f0e7);
+      --mm-sub: var(--fd-muted, #b4c1bb);
+      --mm-head: var(--fd-text, #f4f0e7);
+      --mm-head-sub: var(--fd-muted, #b4c1bb);
+      --mm-panel: rgba(23, 34, 34, .94);
+      --mm-frame: var(--fd-border, rgba(235, 232, 218, .16));
+      --mm-glass: rgba(255, 255, 255, .045);
+      --mm-glass-hi: rgba(255, 255, 255, .085);
+      --mm-glass-on: color-mix(in srgb, var(--fd-accent, #ddb47f) 9%, transparent);
+      --mm-edge: var(--fd-border, rgba(235, 232, 218, .16));
+      --mm-line: var(--fd-border, rgba(235, 232, 218, .16));
+      --mm-track: rgba(255, 255, 255, .14);
+      --mm-on: var(--fd-accent, #ddb47f);
+      --mm-on-edge: var(--fd-accent, #ddb47f);
+      --mm-on-ring: color-mix(in srgb, var(--fd-accent, #ddb47f) 65%, transparent);
+      --mm-bar: rgba(255, 255, 255, .045);
+      --mm-toast: rgba(23, 34, 34, .96);
+      --mm-btn: rgba(255, 255, 255, .08);
+      --mm-err: #ffb4a8;
+      --mm-backdrop: rgba(10, 18, 18, .6);
+      --mm-lift: 0 1.4em 4.5em rgba(0, 0, 0, .55);
+      --mm-title-font: 800 1.375em/1.15 var(--mm-font);
+      --mm-title-shadow: none;
+    }
+    * { box-sizing: border-box; }
+    button { font: inherit; color: inherit; }
+
+    dialog {
+      padding: 0; margin: auto; border: 0; background: none; color: var(--mm-ink); overflow: visible;
+      max-width: none; max-height: none; font: 700 var(--mm-size)/1.35 var(--mm-font);
+    }
+    dialog::backdrop { background: var(--mm-backdrop); }
+    .panel {
+      display: flex; flex-direction: column; width: min(34em, calc(100vw - 32px)); max-height: min(46em, calc(100vh - 32px));
+      padding: 1.2em 1.25em 1.1em; border: .15em solid var(--mm-frame); border-radius: .75em;
+      background: var(--mm-panel); box-shadow: var(--mm-lift);
+      -webkit-backdrop-filter: blur(14px); backdrop-filter: blur(14px);
+    }
+    dialog[open] .panel { animation: mm-in .22s ease-out both; }
+    .panel:focus { outline: none; }
+    @keyframes mm-in { from { opacity: 0; transform: translateY(6px); } }
+
+    header { display: flex; align-items: flex-start; gap: 1em; margin-bottom: 1em; padding-bottom: .9em; border-bottom: 1px solid var(--mm-line); }
+    .titles { flex: 1; min-width: 0; }
+    h2 { margin: 0; font: var(--mm-title-font); letter-spacing: .01em; color: var(--mm-head); text-shadow: var(--mm-title-shadow); }
+    .sub { margin: .3em 0 0; font-size: .84em; font-weight: 700; color: var(--mm-head-sub); }
+    .close {
+      flex: none; display: grid; place-items: center; width: 2em; height: 2em; margin: -.35em -.4em 0 0; padding: 0; border: 0; border-radius: .4em;
+      background: none; color: var(--mm-head); cursor: pointer; transition: transform .12s;
+    }
+    .close:hover { transform: scale(1.1); }
+    .close svg { width: 1.35em; height: 1.35em; filter: drop-shadow(.08em .1em 0 rgba(0, 0, 0, .2)); }
+    :host([data-skin="fuji-dusk"]) .close svg { filter: none; }
+
+    .list { min-height: 0; overflow-y: auto; margin: 0 -.5em 0 0; padding: .1em .5em .2em 0; scrollbar-width: thin; scrollbar-color: color-mix(in srgb, var(--mm-ink) 35%, transparent) transparent; }
+    .group + .group { margin-top: 1.15em; }
+    h3 { margin: 0 0 .55em .15em; font-size: .76em; font-weight: 900; letter-spacing: .08em; text-transform: uppercase; color: var(--mm-head-sub); }
+    .cards { display: grid; gap: .6em; }
+    .card {
+      position: relative; display: grid; grid-template-columns: minmax(0, 1fr) auto; grid-template-areas: "name ctl" "desc ctl";
+      align-items: center; column-gap: .875em; row-gap: .2em; min-height: 4.1em; padding: .75em .875em;
+      border: 1px solid var(--mm-edge); border-radius: .875em; background: var(--mm-glass);
+      box-shadow: inset 0 1px 0 rgba(255, 255, 255, .5), 0 2px 6px rgba(8, 62, 84, .06);
+      cursor: pointer; -webkit-user-select: none; user-select: none;
+      transition: background .15s, border-color .15s, box-shadow .15s, transform .15s;
+    }
+    .card:hover { background: var(--mm-glass-hi); box-shadow: inset 0 1px 0 rgba(255, 255, 255, .6), 0 8px 18px rgba(8, 62, 84, .12); transform: translateY(-1px); }
+    .card:has(input:checked) { background: var(--mm-glass-on); border-color: var(--mm-on-ring); }
+    .card.fixed { cursor: default; }
+    .card.fixed:hover { transform: none; }
+    :host([data-skin="fuji-dusk"]) .card, :host([data-skin="fuji-dusk"]) .card:hover { box-shadow: inset 0 1px 0 rgba(255, 255, 241, .08); }
+    .name { grid-area: name; min-width: 0; font-size: 1.03em; font-weight: 800; line-height: 1.25; overflow-wrap: anywhere; }
+    .ver { margin-left: .45em; font-size: .78em; font-weight: 700; color: var(--mm-sub); }
+    .desc { grid-area: desc; min-width: 0; font-size: .78em; font-weight: 600; line-height: 1.35; color: var(--mm-sub); }
+    .desc.err { color: var(--mm-err); }
+    .ctl { grid-area: ctl; display: flex; align-items: center; gap: .6em; }
+    input { position: absolute; width: 1px; height: 1px; margin: 0; opacity: 0; pointer-events: none; }
+    .switch, .radio { flex: none; position: relative; background: var(--mm-track); box-shadow: inset 0 2px 4px rgba(8, 62, 84, .28); transition: background .18s, box-shadow .18s; }
+    .switch { width: 2.875em; height: 1.625em; border-radius: 999px; }
+    .switch::after, .radio::after { content: ""; position: absolute; border-radius: 50%; background: #fff; box-shadow: 0 2px 5px rgba(0, 0, 0, .25); transition: transform .2s cubic-bezier(.3, 1.4, .6, 1); }
+    .switch::after { top: .1875em; left: .1875em; width: 1.25em; height: 1.25em; }
+    .radio { width: 1.5em; height: 1.5em; border-radius: 50%; }
+    .radio::after { inset: .42em; transform: scale(0); }
+    input:checked + .switch, input:checked + .radio { background: var(--mm-on); box-shadow: inset 0 1px 2px rgba(0, 0, 0, .15), 0 0 0 1px var(--mm-on-edge); }
+    input:checked + .switch::after { transform: translateX(1.25em); }
+    input:checked + .radio::after { transform: scale(1); }
+    input:focus-visible + .switch, input:focus-visible + .radio, button:focus-visible { outline: 2px solid var(--mm-head); outline-offset: 3px; }
+    .btn {
+      flex: none; height: 2.2em; padding: 0 .9em; border: 1px solid var(--mm-edge); border-radius: .6em;
+      background: var(--mm-btn); color: var(--mm-ink); font-size: .82em; font-weight: 900; cursor: pointer; transition: background .15s, border-color .15s;
+    }
+    .btn:hover { background: var(--mm-glass-hi); border-color: var(--mm-on-ring); }
+    .btn:disabled { opacity: .6; cursor: default; }
+    .btn.quiet { background: none; color: var(--mm-sub); }
+    .btn.quiet:hover { color: var(--mm-ink); }
+    .btn.danger, .btn.danger:hover { color: var(--mm-err); border-color: var(--mm-err); }
+    .card.has-cmds { grid-template-areas: "name ctl" "desc ctl" "cmds cmds"; }
+    .cmds { grid-area: cmds; display: flex; flex-wrap: wrap; gap: .45em; margin-top: .4em; }
+    .btn.cmd { height: 2em; padding: 0 .8em; font-size: .76em; }
+    .empty { margin: .4em .2em; font-size: .9em; color: var(--mm-head-sub); }
+
+    .add { min-height: 0; overflow-y: auto; }
+    .add[hidden], .list[hidden] { display: none; }
+    .addbox {
+      display: grid; gap: .75em; padding: .875em; border: 1px solid var(--mm-edge); border-radius: .875em; background: var(--mm-glass);
+      box-shadow: inset 0 1px 0 rgba(255, 255, 255, .5), 0 2px 6px rgba(8, 62, 84, .06);
+    }
+    :host([data-skin="fuji-dusk"]) .addbox { box-shadow: inset 0 1px 0 rgba(255, 255, 241, .08); }
+    .addnote, .addmsg { margin: 0; font-size: .84em; line-height: 1.4; }
+    .addnote { font-weight: 700; color: var(--mm-sub); }
+    .addmsg { font-weight: 800; }
+    .addmsg:empty { display: none; }
+    .addmsg.warn { color: var(--mm-err); }
+    textarea {
+      display: block; width: 100%; min-height: 10em; max-height: 24em; resize: vertical; margin: 0; padding: .7em .8em;
+      border: 1px solid var(--mm-edge); border-radius: .6em; outline: none; background: var(--mm-btn); color: var(--mm-ink);
+      font: 600 .8em/1.45 ui-monospace, Consolas, monospace; scrollbar-width: thin;
+    }
+    textarea::placeholder { color: var(--mm-sub); opacity: 1; }
+    textarea:focus { border-color: var(--mm-on-ring); }
+    .addbar { display: flex; align-items: center; gap: .6em; }
+    .grow { flex: 1; }
+
+    footer {
+      display: flex; align-items: center; gap: .6em; margin-top: 1em; padding: .5em .5em .5em .875em;
+      border: 1px solid var(--mm-edge); border-radius: 1em; background: var(--mm-bar);
+      box-shadow: inset 0 1px 0 rgba(255, 255, 255, .6), 0 8px 22px rgba(8, 62, 84, .12);
+      font-size: .875em; font-weight: 900;
+    }
+    :host([data-skin="fuji-dusk"]) footer { box-shadow: none; }
+    .mmver { flex: none; font-weight: 900; }
+    .hint { flex: 1; min-width: 0; font-size: .9em; font-weight: 700; color: var(--mm-sub); }
+    .hint.warn { color: var(--mm-err); }
+    .key { display: inline-flex; align-items: center; gap: .5em; padding-right: .35em; }
+    kbd {
+      display: inline-grid; place-items: center; min-width: 1.75em; height: 1.6em; padding: 0 .4em; border-radius: .35em;
+      border: 1px solid color-mix(in srgb, var(--mm-ink) 30%, transparent); border-bottom-width: 2px; background: rgba(255, 255, 255, .85);
+      font: 900 1.05em/1 var(--mm-font); color: var(--mm-ink);
+    }
+    :host([data-skin="fuji-dusk"]) kbd { background: rgba(255, 255, 255, .08); }
+    .key.listening { border-color: var(--mm-on-edge); background: var(--mm-glass-on); }
+    .key.listening kbd { color: var(--mm-on-edge); }
+
+    .toast {
+      position: fixed; inset: 1.2em auto auto 50%; transform: translateX(-50%); margin: 0; display: none;
+      max-width: min(30em, calc(100vw - 32px)); padding: .7em 1.1em; border: 1px solid var(--mm-edge); border-radius: .9em;
+      background: var(--mm-toast); color: var(--mm-ink); font: 800 var(--mm-size)/1.35 var(--mm-font);
+      box-shadow: 0 10px 28px rgba(6, 44, 60, .3); overflow: visible;
+    }
+    .toast.show { display: block; animation: mm-toast .22s ease-out both; }
+    @keyframes mm-toast { from { opacity: 0; transform: translate(-50%, -6px); } }
+    @media (prefers-reduced-motion: reduce) { *, *::after { transition: none !important; animation: none !important; } }
+  `;
+
+  let host, shadow, dialog, listEl, keyBtn, keyCap, hintEl, toastEl, launcher, toastTimer, listening = false;
+  let addView, addBtn, codeBox, addMsg, goBtn, adding = false, busy = false, removing = null, inputs = 0;
+
+  function buildUi() {
+    if (host || !document.body) return !!host;
+    if (current !== MENU) return within(MENU, buildUi, null, []);
+    host = document.createElement("div");
+    host.id = "ss-mod-menu";
+    shadow = host.attachShadow({ mode: "open" });
+    shadow.innerHTML = `<style>${CSS}</style>
+      <dialog aria-labelledby="mm-title">
+        <div class="panel" tabindex="-1" autofocus>
+          <header>
+            <div class="titles">
+              <h2 id="mm-title">Mod Menu</h2>
+              <p class="sub">Switch themes and turn mods on or off. No reload needed.</p>
+            </div>
+            <button type="button" class="close" aria-label="Close"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3.6" stroke-linecap="round"><path d="M6 6l12 12M18 6L6 18"/></svg></button>
+          </header>
+          <div class="list"></div>
+          <section class="add" hidden>
+            <h3 id="mm-add-title">Add a script</h3>
+            <div class="addbox">
+              <p class="addnote">Paste a link to a .user.js file, or the whole script. You can also drop the file here.</p>
+              <textarea spellcheck="false" autocomplete="off" placeholder="https://…/my-script.user.js" aria-labelledby="mm-add-title"></textarea>
+              <p class="addmsg" role="status"></p>
+              <div class="addbar">
+                <button type="button" class="btn pick">Choose file</button>
+                <span class="grow"></span>
+                <button type="button" class="btn cancel">Cancel</button>
+                <button type="button" class="btn go">Add</button>
+              </div>
+            </div>
+            <input type="file" accept=".js,text/javascript,application/javascript" hidden>
+          </section>
+          <footer>
+            <span class="mmver">Mod Menu v${VERSION}</span>
+            <span class="hint" role="status"></span>
+            <button type="button" class="btn addbtn">Add script</button>
+            <button type="button" class="btn key" title="Change the key that opens this menu">Hotkey <kbd></kbd></button>
+          </footer>
+        </div>
+      </dialog>
+      <div class="toast" popover="manual" role="status"></div>`;
+    dialog = shadow.querySelector("dialog");
+    listEl = shadow.querySelector(".list");
+    keyBtn = shadow.querySelector(".key");
+    keyCap = keyBtn.querySelector("kbd");
+    hintEl = shadow.querySelector(".hint");
+    toastEl = shadow.querySelector(".toast");
+    addView = shadow.querySelector(".add");
+    addBtn = shadow.querySelector(".addbtn");
+    codeBox = shadow.querySelector("textarea");
+    addMsg = shadow.querySelector(".addmsg");
+    goBtn = shadow.querySelector(".go");
+    const fileIn = shadow.querySelector("input[type=file]"), panel = shadow.querySelector(".panel");
+
+    // Keys pressed inside the open menu stay out of the game. Once it closes, they reach the game,
+    // even while the browser hasn't moved focus out of the menu yet.
+    for (const type of ["keydown", "keyup", "keypress"]) host.addEventListener(type, e => { if (dialog.open) e.stopPropagation(); });
+    shadow.querySelector(".close").addEventListener("click", close);
+    // A click outside the panel lands on the dialog itself (its backdrop).
+    dialog.addEventListener("click", e => { if (e.target === dialog) close(); });
+    dialog.addEventListener("cancel", e => {
+      if (listening) { e.preventDefault(); stopListening(); }
+      else if (adding) { e.preventDefault(); showAdd(false); }
+    });
+    dialog.addEventListener("close", () => { stopListening(); if (!busy) showAdd(false); });
+    keyBtn.addEventListener("click", () => (listening ? stopListening() : startListening()));
+    listEl.addEventListener("change", e => {
+      const t = e.target;
+      if (t.name === "mm-theme") setTheme(t.value);
+      else if (t.dataset.id) setEnabled(t.dataset.id, t.checked);
+      sound("ui_click");
+    });
+    listEl.addEventListener("click", e => {
+      const b = e.target.closest?.("button");
+      if (!b) return;
+      e.preventDefault();
+      const d = b.dataset, m = mods.get(d.settings || d.reload || d.remove || d.of);
+      if (!m) return;
+      if (d.reload) return location.reload();
+      if (d.remove) return removeClicked(m);
+      close();
+      if (d.cmd) return runCommand(m, d.cmd);
+      let opened = false;
+      const s = settingsOf(m);
+      try { opened = !!s && within(s === m.def ? MENU : m.run, s.openSettings, s, []) !== false; } catch (err) { console.warn("[Mod Menu]", m.name, err); }
+      if (!opened) toast(`${m.name} settings open from the home screen.`);
+    });
+
+    addBtn.addEventListener("click", () => showAdd(!adding));
+    shadow.querySelector(".cancel").addEventListener("click", () => showAdd(false));
+    shadow.querySelector(".pick").addEventListener("click", () => fileIn.click());
+    fileIn.addEventListener("change", () => {
+      const f = fileIn.files[0];
+      fileIn.value = "";
+      if (f) addFrom(f);
+    });
+    goBtn.addEventListener("click", () => addFrom(codeBox.value));
+    codeBox.addEventListener("keydown", e => {
+      if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) { e.preventDefault(); addFrom(codeBox.value); }
+    });
+    // A .user.js file dropped anywhere on the menu is added.
+    panel.addEventListener("dragover", e => { if (e.dataTransfer?.types.includes("Files")) e.preventDefault(); });
+    panel.addEventListener("drop", e => {
+      const f = e.dataTransfer?.files[0];
+      if (!f) return;
+      e.preventDefault();
+      addFrom(f);
+    });
+    document.body.appendChild(host);
+    paint();
+    return true;
+  }
+
+  const el = (tag, cls, text) => {
+    const n = document.createElement(tag);
+    if (cls) n.className = cls;
+    if (text != null) n.textContent = text;
+    return n;
+  };
+  // Its own settings, or those of what an added script registered with the menu.
+  const settingsOf = m => (typeof m.def?.openSettings === "function" && m.def) || (m.run?.on && m.run.defs.find(d => typeof d.openSettings === "function")) || null;
+  const button = (parent, cls, text, data) => {
+    const b = parent.appendChild(el("button", "btn" + (cls ? " " + cls : ""), text));
+    b.type = "button";
+    Object.assign(b.dataset, data);
+    return b;
+  };
+  function card(m, { theme = false, checked = false } = {}) {
+    const c = el(m.alwaysOn ? "div" : "label", "card" + (m.alwaysOn ? " fixed" : ""));
+    const name = c.appendChild(el("span", "name", m.name));
+    if (m.version) name.appendChild(el("span", "ver", "v" + m.version));
+    const problem = m.error || m.warn;
+    c.appendChild(el("span", "desc" + (problem ? " err" : ""), problem || m.note || m.description));
+    const ctl = c.appendChild(el("span", "ctl"));
+    if (m.reload) button(ctl, "", "Reload", { reload: m.id }).title = "Reload the game";
+    if (settingsOf(m) && (m.alwaysOn || m.active)) button(ctl, "", "Settings", { settings: m.id });
+    if (m.script) {
+      const sure = removing?.id === m.id;
+      button(ctl, sure ? "danger" : "quiet", sure ? "Remove it?" : "Remove", { remove: m.id });
+    }
+    // Commands the script added with GM_registerMenuCommand.
+    const cmds = m.run?.on ? [...m.run.commands] : [];
+    if (cmds.length) {
+      c.classList.add("has-cmds");
+      const row = c.appendChild(el("span", "cmds"));
+      for (const [key, cmd] of cmds) button(row, "cmd", cmd.caption, { cmd: key, of: m.id });
+    }
+    if (!m.alwaysOn) {
+      const input = ctl.appendChild(el("input"));
+      if (theme) {
+        input.type = "radio";
+        input.name = "mm-theme";
+        input.value = m.id;
+      } else {
+        input.type = "checkbox";
+        input.setAttribute("role", "switch");
+        input.dataset.id = m.id;
+      }
+      input.checked = checked;
+      input.setAttribute("aria-label", m.name);
+      // Clicking the card works its switch, not the first button on it.
+      input.id = "mm-in-" + ++inputs;
+      c.htmlFor = input.id;
+      ctl.appendChild(el("span", theme ? "radio" : "switch"));
+    }
+    return c;
+  }
+  // Which control had focus, so it can have it again after the list is rebuilt.
+  const focusKey = n => {
+    const d = n?.dataset;
+    if (!d) return "";
+    if (n.name === "mm-theme") return "t:" + n.value;
+    if (d.cmd) return `c:${d.of}:${d.cmd}`;
+    for (const k of ["id", "settings", "reload", "remove"]) if (d[k]) return k + ":" + d[k];
+    return "";
+  };
+  function render() {
+    if (!listEl || !dialog.open) return;
+    const had = focusKey(shadow.activeElement);
+    const all = [...mods.values()];
+    const themes = all.filter(m => m.group === "theme");
+    const others = all.filter(m => m.group !== "theme");
+    const chosen = activeTheme()?.id || "none";
+    const frag = document.createDocumentFragment();
+    if (themes.length) {
+      const g = frag.appendChild(el("section", "group"));
+      g.appendChild(el("h3", null, "Theme"));
+      const cards = g.appendChild(el("div", "cards"));
+      cards.setAttribute("role", "radiogroup");
+      cards.setAttribute("aria-label", "Theme");
+      cards.appendChild(card({ id: "none", name: "Game default", description: "The game's own look, with no theme.", group: "theme" }, { theme: true, checked: chosen === "none" }));
+      for (const m of themes) cards.appendChild(card(m, { theme: true, checked: chosen === m.id }));
+    }
+    if (others.length) {
+      const g = frag.appendChild(el("section", "group"));
+      g.appendChild(el("h3", null, "Mods"));
+      const cards = g.appendChild(el("div", "cards"));
+      for (const m of others) cards.appendChild(card(m, { checked: m.active }));
+    }
+    if (!all.length) frag.appendChild(el("p", "empty", "No mods yet. Click Add script below to add one, or install a theme or a mod that works with the Mod Menu."));
+    listEl.replaceChildren(frag);
+    if (had) [...listEl.querySelectorAll("input, button")].find(n => focusKey(n) === had)?.focus({ preventScroll: true });
+  }
+  // Cheap refresh after a change: the skin follows the active theme, and the list is rebuilt only while it shows.
+  function paint() {
+    if (!host) return;
+    if (current !== MENU) return within(MENU, paint, null, []);
+    const t = activeTheme();
+    // Fuji Dusk added as a script still gets the menu's Fuji look.
+    if (t) host.dataset.skin = t.script && /fuji dusk/i.test(t.script.name) ? "fuji-dusk" : t.id;
+    else delete host.dataset.skin;
+    if (!listening) keyCap.textContent = keyLabel(state.key);
+    if (launcher) launcher.title = `Mod Menu (${keyLabel(state.key)})`;
+    render();
+  }
+
+  function open() {
+    if (!buildUi() || dialog.open) return;
+    if (current !== MENU) return within(MENU, open, null, []);
+    findBetterHud();
+    if (document.pointerLockElement) document.exitPointerLock();
+    say("");
+    dialog.showModal();
+    paint();
+    sound("ui_popupopen");
+  }
+  function close() {
+    if (!dialog?.open) return;
+    shadow.activeElement?.blur();
+    dialog.close();
+  }
+  function toggle() {
+    dialog?.open ? close() : open();
+  }
+
+  function toast(text, ms = 4200) {
+    if (!buildUi()) return;
+    if (current !== MENU) return within(MENU, toast, null, [text, ms]);
+    toastEl.textContent = text;
+    toastEl.classList.add("show");
+    try { if (toastEl.matches(":popover-open")) toastEl.hidePopover(); toastEl.showPopover(); } catch { /* no popover support: it shows as a fixed box */ }
+    clearTimeout(toastTimer);
+    toastTimer = setTimeout(() => {
+      toastEl.classList.remove("show");
+      try { toastEl.hidePopover(); } catch { /* already hidden */ }
+    }, ms);
+  }
+
+  /* ---- Adding and removing scripts ---- */
+  function showAdd(on) {
+    adding = on;
+    addView.hidden = !on;
+    listEl.hidden = on;
+    addBtn.setAttribute("aria-expanded", on);
+    if (on) {
+      if (!busy) addNote("");
+      codeBox.focus();
+    } else {
+      render();
+      if (addView.contains(shadow.activeElement)) addBtn.focus();
+    }
+  }
+  function addNote(text, warn = false) {
+    addMsg.textContent = text;
+    addMsg.classList.toggle("warn", warn);
+  }
+  async function addFrom(src) {
+    if (busy) return;
+    busy = true;
+    goBtn.disabled = true;
+    if (!adding) showAdd(true);
+    try {
+      const text = typeof src === "string" ? src : await src.text();
+      addNote(/^\s*https?:\/\/\S+\s*$/i.test(text) ? "Downloading…" : "Adding…");
+      const m = mods.get(await addScript(text));
+      codeBox.value = "";
+      showAdd(false);
+      toast(m.error || m.warn ? `Added ${m.name}, but it ran into a problem. Its card says what.`
+        : `Added ${m.name}. If Tampermonkey runs it too, turn it off there so it doesn't run twice.`, 7000);
+      sound("ui_click");
+    } catch (err) {
+      addNote((err && err.message) || String(err), true);
+    } finally {
+      busy = false;
+      goBtn.disabled = false;
+    }
+  }
+  // Remove asks once more: a second click within 4 seconds removes the script and everything it saved.
+  function removeClicked(m) {
+    if (removing?.id === m.id) {
+      clearTimeout(removing.timer);
+      removing = null;
+      removeScript(m.id);
+      shadow.querySelector(".panel").focus();
+      toast(`Removed ${m.name}.`);
+      return;
+    }
+    if (removing) clearTimeout(removing.timer);
+    removing = { id: m.id, timer: setTimeout(() => { removing = null; render(); }, 4000) };
+    render();
+  }
+  function runCommand(m, key) {
+    const cmd = m.run?.on && m.run.commands.get(key);
+    if (!cmd) return;
+    try {
+      within(m.run, cmd.fn, null, []);
+    } catch (err) {
+      console.error("[Mod Menu]", m.name, err);
+      toast(`${m.name}: ${(err && err.message) || err}`);
+    }
+  }
+
+  /* ---- Hotkey ---- */
+  const KEY_NAMES = {
+    Backquote: "`", Backslash: "\\", BracketLeft: "[", BracketRight: "]", Semicolon: ";", Quote: "'", Comma: ",", Period: ".", Slash: "/",
+    Minus: "-", Equal: "=", ShiftLeft: "Left Shift", ShiftRight: "Right Shift", ControlLeft: "Left Ctrl", ControlRight: "Right Ctrl",
+    AltLeft: "Left Alt", AltRight: "Right Alt", ArrowUp: "↑", ArrowDown: "↓", ArrowLeft: "←", ArrowRight: "→", IntlBackslash: "\\",
+  };
+  const keyLabel = code => KEY_NAMES[code] || code.replace(/^Key|^Digit/, "").replace(/^Numpad/, "Num ");
+  const REFUSED = new Set(["Escape", "Tab", "Enter", "Space", "MetaLeft", "MetaRight", "ContextMenu", "CapsLock", "NumpadEnter"]);
+  function gameKeyUsing(code) {
+    try {
+      const game = window.vueApp.$data.settingsUi.settings.controls.keyboard.game;
+      const hit = Object.entries(game).find(([, v]) => v && v.code === code);
+      return hit ? hit[0].replace(/_/g, " ") : "";
+    } catch { return ""; }
+  }
+  function say(text, warn = false) {
+    hintEl.textContent = text;
+    hintEl.classList.toggle("warn", warn);
+  }
+  function startListening() {
+    listening = true;
+    keyBtn.classList.add("listening");
+    keyCap.textContent = "…";
+    say("Press a key for the menu. Esc cancels.");
+  }
+  function stopListening() {
+    if (!listening) return;
+    listening = false;
+    keyBtn.classList.remove("listening");
+    keyCap.textContent = keyLabel(state.key);
+    if (!hintEl.classList.contains("warn")) say("");
+  }
+  const typingIn = t => !!t && (t.isContentEditable || t.tagName === "TEXTAREA" || t.tagName === "SELECT" ||
+    (t.tagName === "INPUT" && !/^(checkbox|radio|button|range|color|submit|reset)$/i.test(t.type)));
+
+  window.addEventListener("keydown", e => {
+    if (listening) {
+      e.preventDefault();
+      e.stopImmediatePropagation();
+      if (e.code === "Escape") {
+        stopListening();
+        return say("");
+      }
+      if (REFUSED.has(e.code) || !e.code) return say(`${e.key === " " ? "Space" : e.key || "That key"} can't open the menu. Pick another key.`, true);
+      const used = gameKeyUsing(e.code);
+      if (used) return say(`${keyLabel(e.code)} is the game's ${used} key. Pick another key.`, true);
+      state.key = e.code;
+      save();
+      stopListening();
+      say(`The menu now opens with ${keyLabel(e.code)}.`);
+      paint();
+      return;
+    }
+    if (e.code !== state.key || e.repeat || e.ctrlKey || e.altKey || e.metaKey || typingIn(e.composedPath()[0])) return;
+    e.preventDefault();
+    e.stopImmediatePropagation();
+    toggle();
+  }, true);
+
+  /* ---- Launcher: a button beside the game's Settings and Fullscreen buttons ---- */
+  function placeLauncher() {
+    const row = byId("corner-buttons");
+    if (!row || (launcher && launcher.parentNode === row)) return;
+    if (current !== MENU) return within(MENU, placeLauncher, null, []);
+    const gear = row.querySelector(".fa-cog")?.closest("button");
+    if (!launcher) {
+      launcher = el("button");
+      launcher.id = "ssmm-launch";
+      launcher.type = "button";
+      launcher.className = gear?.className || "ss_button btn_blue bevel_blue box_relative pause-screen-ui btn-account-w-icon text-shadow-none text_blue1";
+      launcher.innerHTML = '<i class="fas fa-puzzle-piece"></i>';
+      launcher.setAttribute("aria-label", "Mod Menu");
+      launcher.addEventListener("click", e => { e.stopPropagation(); open(); });
+    }
+    launcher.title = `Mod Menu (${keyLabel(state.key)})`;
+    row.insertBefore(launcher, gear || row.lastElementChild);
+    if (!state.hinted) {
+      state.hinted = true;
+      save();
+      setTimeout(() => toast(`Mod Menu is ready. Press ${keyLabel(state.key)} or the puzzle button to open it.`), 1200);
+    }
+  }
+
+  /* ---- Start ---- */
+  // Page rules for the things the themes add outside their stylesheets.
+  const pageCss = el("style");
+  pageCss.id = "ssmm-page-style";
+  pageCss.textContent = `
+    html.ssmm-off-cherry-blossom #ss-sakura-petals, html.ssmm-off-fuji-dusk #fuji-dusk-controls { display: none !important; }
+    #ssmm-launch > i { pointer-events: none; }
+  `;
+  const start = () => {
+    root().appendChild(pageCss);
+    // Added scripts first, so one set to run at document-start runs before the game does.
+    for (const s of scripts) register(scriptDef(s));
+    queued.forEach(register);
+    scan();
+  };
+  if (document.documentElement) start();
+  else new MutationObserver((_, o) => { if (document.documentElement) { o.disconnect(); start(); } }).observe(document, { childList: true });
+  // The themes add themselves at start-up; stop looking a minute after the page has loaded.
+  window.addEventListener("load", () => setTimeout(() => watcher.disconnect(), 60000), { once: true });
+
+  const boot = () => {
+    // Scripts set to run later than document-start run once the page is parsed.
+    runPending();
+    booted = true;
+    buildUi();
+    findBetterHud();
+    placeLauncher();
+    // The game rebuilds its top bar on some screen changes, so the button is put back when it goes missing.
+    setInterval(placeLauncher, 1000);
+  };
+  if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", boot, { once: true });
+  else boot();
+})();

@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Shell Shockers Mod Menu
 // @namespace    https://github.com/Virojet
-// @version      1.3.0
+// @version      1.3.1
 // @description  One menu for your Shell Shockers mods. Add any userscript, switch themes and turn mods on or off without reloading.
 // @author       Virojet
 // @license      MIT
@@ -100,7 +100,7 @@
   "use strict";
   if (window.ssModMenu) return;
 
-  const VERSION = "1.3.0";
+  const VERSION = "1.3.1";
   // Saved before anything can wrap it: the menu's own record of page changes uses it.
   const NativeMO = window.MutationObserver;
   const STORE = "ssmm.v1";
@@ -1274,40 +1274,40 @@
       --mm-lift: 0 1.6em 4.5em rgba(0, 0, 0, .65);
       --mm-title-shade: .1em .1em 0 rgba(0, 0, 0, .85);
     }
-    /* Fuji Dark: Blossom V4's look in Fuji colours, black glass over its photo with amber for what's on. */
+    /* Fuji Dark: Blossom V4's look in Fuji colours, gray glass over its photo with blue for what's on. */
     :host([data-skin="fuji-dark"]) {
-      --mm-ink: #f4f0e7;
-      --mm-sub: rgba(244, 240, 231, .72);
-      --mm-head: #f4f0e7;
-      --mm-head-sub: rgba(240, 207, 160, .92);
-      --mm-panel: linear-gradient(rgba(9, 15, 15, .78), rgba(9, 15, 15, .9)), var(--fk-art, none) center / cover, #0b1211;
-      --mm-veil: rgba(9, 15, 15, .92);
-      --mm-frame: var(--fk-amber, #ddb47f);
-      --mm-sheen: rgba(255, 240, 215, .14);
+      --mm-ink: #eef3f8;
+      --mm-sub: rgba(238, 243, 248, .72);
+      --mm-head: #eef3f8;
+      --mm-head-sub: rgba(188, 215, 242, .92);
+      --mm-panel: linear-gradient(rgba(11, 13, 16, .78), rgba(11, 13, 16, .9)), var(--fk-art, none) center / cover, #0e1013;
+      --mm-veil: rgba(11, 13, 16, .92);
+      --mm-frame: var(--fk-blue, #8fb8e0);
+      --mm-sheen: rgba(225, 238, 255, .14);
       --mm-glass: rgba(0, 0, 0, .44);
-      --mm-glass-hi: rgba(31, 27, 19, .62);
-      --mm-glass-on: rgba(94, 68, 34, .45);
-      --mm-edge: rgba(221, 180, 127, .24);
-      --mm-edge-hi: rgba(221, 180, 127, .6);
-      --mm-line: rgba(221, 180, 127, .28);
-      --mm-lip: inset 0 1px 0 rgba(255, 240, 215, .07);
+      --mm-glass-hi: rgba(32, 36, 41, .62);
+      --mm-glass-on: rgba(36, 66, 100, .45);
+      --mm-edge: rgba(201, 206, 212, .22);
+      --mm-edge-hi: rgba(143, 184, 224, .6);
+      --mm-line: rgba(201, 206, 212, .24);
+      --mm-lip: inset 0 1px 0 rgba(225, 238, 255, .07);
       --mm-shade: 0 0 transparent;
       --mm-shade-hi: 0 .75em 1.5em -.6em rgba(0, 0, 0, .6);
       --mm-track: rgba(255, 255, 255, .16);
       --mm-track-shade: inset 0 2px 4px rgba(0, 0, 0, .45);
-      --mm-on: linear-gradient(180deg, #f0cfa0, #d9aa6c);
-      --mm-on-edge: #ddb47f;
-      --mm-on-ring: rgba(221, 180, 127, .7);
+      --mm-on: linear-gradient(180deg, #bcd7f2, #7fadd9);
+      --mm-on-edge: #8fb8e0;
+      --mm-on-ring: rgba(143, 184, 224, .7);
       --mm-bar: rgba(0, 0, 0, .5);
-      --mm-bar-shade: inset 0 1px 0 rgba(255, 240, 215, .07);
+      --mm-bar-shade: inset 0 1px 0 rgba(225, 238, 255, .07);
       --mm-btn: rgba(255, 255, 255, .08);
-      --mm-btn-hi: rgba(221, 180, 127, .16);
+      --mm-btn-hi: rgba(143, 184, 224, .16);
       --mm-kbd: rgba(255, 255, 255, .1);
-      --mm-toast: rgba(11, 17, 17, .96);
+      --mm-toast: rgba(14, 16, 19, .96);
       --mm-toast-shade: 0 .75em 2em rgba(0, 0, 0, .55);
       --mm-err: #ffb4a8;
-      --mm-focus: #f0cfa0;
-      --mm-close-hi: rgba(221, 180, 127, .14);
+      --mm-focus: #bcd7f2;
+      --mm-close-hi: rgba(143, 184, 224, .14);
       --mm-backdrop: rgba(0, 0, 0, .55);
       --mm-lift: 0 1.6em 4.5em rgba(0, 0, 0, .65);
       --mm-title-shade: .1em .1em 0 rgba(0, 0, 0, .85);

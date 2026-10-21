@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Shell Shockers Mod Menu
 // @namespace    https://github.com/Virojet
-// @version      1.3.1
+// @version      1.3.2
 // @description  One menu for your Shell Shockers mods. Add any userscript, switch themes and turn mods on or off without reloading.
 // @author       Virojet
 // @license      MIT
@@ -100,7 +100,7 @@
   "use strict";
   if (window.ssModMenu) return;
 
-  const VERSION = "1.3.1";
+  const VERSION = "1.3.2";
   // Saved before anything can wrap it: the menu's own record of page changes uses it.
   const NativeMO = window.MutationObserver;
   const STORE = "ssmm.v1";
@@ -1912,11 +1912,14 @@
     paint();
     sound("ui_popupopen");
   }
-  // Fades out, unless something else opens over the game right after (a mod's settings), which needs the page now.
+  // Fades out, unless something else opens over the game right after (a mod's settings), which needs the page now, or
+  // the browser asks for less motion. It closes with the game's popup sound whether it fades or not; a mod's settings
+  // opening over it come with the game's own sound instead.
   function close(now) {
     if (!dialog?.open || (closing && !now)) return;
     shadow.activeElement?.blur();
     stopListening();
+    if (!now) sound("ui_popupclose");
     if (now || calm()) return dialog.close();
     dialog.classList.add("out");
     closing = setTimeout(() => {
@@ -1924,7 +1927,6 @@
       dialog.classList.remove("out");
       dialog.close();
     }, 160);
-    sound("ui_popupclose");
   }
   function toggle() {
     dialog?.open && !closing ? close() : open();

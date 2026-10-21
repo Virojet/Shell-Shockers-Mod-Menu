@@ -8,7 +8,7 @@
 
 [![Install Mod Menu](https://img.shields.io/badge/Install_Mod_Menu-one_click-2ea44f?style=for-the-badge&logo=tampermonkey&logoColor=white)](https://raw.githubusercontent.com/Virojet/Shell-Shockers-Mod-Menu/main/Shell-Shockers-Mod-Menu.user.js)
 
-[![Version](https://img.shields.io/badge/version-1.3.1-0E7697?style=flat-square)](./Shell-Shockers-Mod-Menu.user.js)
+[![Version](https://img.shields.io/badge/version-1.3.2-0E7697?style=flat-square)](./Shell-Shockers-Mod-Menu.user.js)
 [![License: MIT](https://img.shields.io/badge/license-MIT-lightgrey?style=flat-square)](./LICENSE)
 
 </div>
@@ -161,6 +161,9 @@ If `enable()` or `disable()` throws, the card shows the error and the switch sta
 After each change the menu fires `ssmodmenu:change` on `window`, with `{ id, enabled }` in `event.detail`.
 
 ## Changelog
+
+### 1.3.2 — 2026-10-21
+- **The menu makes the game's close sound every time it closes,** the one the Settings window makes. With "reduce motion" turned on in your system or browser the menu closed without it; it now sounds the same with or without the fade.
 
 ### 1.3.1 — 2026-10-19
 - **Fuji Dark look is blue and gray** now, matching Fuji Dark 1.2.0, which swapped its amber and browns for the blues and grays of the photo's sky.

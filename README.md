@@ -103,8 +103,8 @@ Mods Tampermonkey runs show up here too:
 | **Cherry Blossom** theme | Switches it on or off live, petals included. |
 | **Blossom V4** theme | Switches it on or off live. |
 | **Fuji Dusk** theme | Switches it on or off live. Its own settings open from the **Settings** button on its card. |
-| **Fuji Dark** theme | Switches it on or off live. It adds itself to the menu. |
-| **Better HUD** | Listed as always on. **Settings** jumps to Better HUD's MODS tab, where its own switches are. |
+| **Fuji Dark** theme | Switches it on or off live. It adds itself to the menu (private theme, not published). |
+| **[Better HUD](https://github.com/Virojet/Shell-Shockers-Better-Hud-Mod)** | Listed as always on. **Settings** jumps to Better HUD's MODS tab, where its own switches are. |
 | Any mod that registers itself | Turned on or off live. See [For mod authors](#for-mod-authors). |
 
 **Themes:** pick one, or pick **Game default** for the normal look. The screen fades over to the new look, and the menu itself follows the theme you pick.

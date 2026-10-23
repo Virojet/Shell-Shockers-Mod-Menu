@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Shell Shockers Mod Menu
 // @namespace    https://github.com/Virojet
-// @version      1.3.2
+// @version      1.4.0
 // @description  One menu for your Shell Shockers mods. Add any userscript, switch themes and turn mods on or off without reloading.
 // @author       Virojet
 // @license      MIT
@@ -100,7 +100,7 @@
   "use strict";
   if (window.ssModMenu) return;
 
-  const VERSION = "1.3.2";
+  const VERSION = "1.4.0";
   // Saved before anything can wrap it: the menu's own record of page changes uses it.
   const NativeMO = window.MutationObserver;
   const STORE = "ssmm.v1";
@@ -1556,8 +1556,8 @@
   `;
 
   let host, shadow, dialog, panel, listEl, themeGroup, modGroup, themeBox, modBox, countEl, emptyEl, keyBtn, keyCap, hintEl, toastEl, probe;
-  let addView, addBtn, codeBox, addMsg, goBtn, pickBtn, launcher, toastTimer = 0, closing = 0, listening = false;
-  let adding = false, busy = false, removing = null, inputs = 0, dragDepth = 0;
+  let addView, addBtn, checkBtn, codeBox, addMsg, goBtn, pickBtn, launcher, toastTimer = 0, closing = 0, listening = false;
+  let adding = false, busy = false, checking = false, removing = null, inputs = 0, dragDepth = 0;
   const motion = window.matchMedia?.("(prefers-reduced-motion: reduce)");
   const calm = () => !!motion?.matches;
 
@@ -1609,6 +1609,7 @@
           <footer>
             <span class="mmver">Mod Menu v${VERSION}</span>
             <span class="hint" role="status"></span>
+            <button type="button" class="btn checkbtn" data-sound="ui_toggletab" hidden>Check for updates</button>
             <button type="button" class="btn addbtn" data-sound="ui_toggletab" aria-expanded="false">Add script</button>
             <button type="button" class="btn key" title="Change the key that opens this menu">Hotkey <kbd></kbd></button>
           </footer>
@@ -1633,6 +1634,7 @@
     probe = q(".probe");
     addView = q(".add");
     addBtn = q(".addbtn");
+    checkBtn = q(".checkbtn");
     codeBox = q("textarea");
     addMsg = q(".addmsg");
     goBtn = q(".go");
@@ -1678,10 +1680,11 @@
       e.preventDefault();
       const d = b.dataset;
       if ("add" in d) return showAdd(true);
-      const m = mods.get(d.settings || d.reload || d.remove || d.of);
+      const m = mods.get(d.settings || d.reload || d.remove || d.update || d.of);
       if (!m) return;
       if (d.reload) return location.reload();
       if (d.remove) return removeClicked(m);
+      if (d.update) return updateClicked(m);
       // A mod's settings or command opens over the game, so the menu gets out of the way at once.
       close(true);
       if (d.cmd) return runCommand(m, d.cmd);
@@ -1699,6 +1702,7 @@
     new ResizeObserver(edges).observe(listEl);
 
     addBtn.addEventListener("click", () => showAdd(!adding));
+    checkBtn.addEventListener("click", checkUpdates);
     q(".cancel").addEventListener("click", () => showAdd(false));
     pickBtn.addEventListener("click", () => fileIn.click());
     fileIn.addEventListener("change", () => {
@@ -1743,6 +1747,7 @@
     if (text != null) n.textContent = text;
     return n;
   };
+  const updates = new Map();
   const button = (cls, text, data, title) => {
     const b = el("button", "btn" + (cls ? " " + cls : ""), text);
     b.type = "button";
@@ -1802,6 +1807,7 @@
     const btns = [];
     if (m.reload) btns.push(["", "Reload", "reload", "Reload the game"]);
     if ((m.alwaysOn || m.active) && settingsOf(m)) btns.push(["", "Settings", "settings"]);
+    if (m.script && updates.has(m.id)) btns.push(["", "Update", "update", `Update to version ${updates.get(m.id)}. Its settings are kept.`]);
     if (m.script) btns.push(removing?.id === m.id ? ["danger", "Remove it?", "remove", "Click again to remove it and everything it saved", "ui_reset"] : ["quiet", "Remove", "remove"]);
     const bs = btns.join("|");
     if (s.btns !== bs) {
@@ -1830,12 +1836,13 @@
     if (!d) return "";
     if (n.name === "mm-theme") return "t:" + n.value;
     if (d.cmd) return `c:${d.of}:${d.cmd}`;
-    for (const k of ["id", "settings", "reload", "remove"]) if (d[k]) return k + ":" + d[k];
+    for (const k of ["id", "settings", "reload", "remove", "update"]) if (d[k]) return k + ":" + d[k];
     return "";
   };
   function render() {
     if (!listEl || !dialog.open) return;
     const had = focusKey(shadow.activeElement), seen = new Set();
+    checkBtn.hidden = !scripts.some(x => x.from);
     const all = [...mods.values()], themes = all.filter(m => m.group === "theme"), others = all.filter(m => m.group !== "theme");
     const chosen = activeTheme()?.id || "none";
     // Cards go in again only when the order changed: moving one would cut its switch's slide short.
@@ -2054,6 +2061,54 @@
     } catch (err) {
       addNote((err && err.message) || String(err), true);
       codeBox.setAttribute("aria-invalid", "true");
+      sound("ui_reset");
+    } finally {
+      setBusy(false);
+    }
+  }
+  // Check for updates: only when pressed. Each added script that came from a link is downloaded again and its @version
+  // compared with the one added; a card gets an Update button only when the link now has a newer one.
+  const newer = (a, b) => {
+    const x = String(a).split(/[^\d]+/).filter(Boolean).map(Number), y = String(b).split(/[^\d]+/).filter(Boolean).map(Number);
+    for (let i = 0; i < Math.max(x.length, y.length); i++) if ((x[i] || 0) !== (y[i] || 0)) return (x[i] || 0) > (y[i] || 0);
+    return false;
+  };
+  async function checkUpdates() {
+    if (checking) return;
+    const todo = scripts.filter(x => x.from);
+    if (!todo.length) return;
+    checking = true;
+    checkBtn.disabled = true;
+    say("Checking…");
+    let failed = 0;
+    updates.clear();
+    for (const x of todo) {
+      try {
+        const v = parseMeta(await download(x.from)).meta.version;
+        if (v && newer(v, x.version)) updates.set("us." + x.key, v);
+      } catch { failed++; }
+    }
+    checking = false;
+    checkBtn.disabled = false;
+    const n = updates.size;
+    say(n ? `${n} update${n > 1 ? "s" : ""} found.` : failed ? `Couldn't check ${failed} of ${todo.length}.` : "Everything is up to date.", !n && failed > 0);
+    sound(n ? "ui_playconfirm" : "ui_click");
+    render();
+  }
+  async function updateClicked(m) {
+    const from = m.script.from;
+    if (busy || !from) return;
+    setBusy(true);
+    say(`Updating ${m.name}…`);
+    try {
+      const id = await addScript(from);
+      updates.delete(m.id);
+      render();
+      say("");
+      toast(`Updated ${mods.get(id).name} to version ${mods.get(id).version}.`);
+      sound("ui_playconfirm");
+    } catch (err) {
+      say((err && err.message) || String(err), true);
       sound("ui_reset");
     } finally {
       setBusy(false);

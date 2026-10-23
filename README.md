@@ -8,7 +8,7 @@
 
 [![Install Mod Menu](https://img.shields.io/badge/Install_Mod_Menu-one_click-2ea44f?style=for-the-badge&logo=tampermonkey&logoColor=white)](https://raw.githubusercontent.com/Virojet/Shell-Shockers-Mod-Menu/main/Shell-Shockers-Mod-Menu.user.js)
 
-[![Version](https://img.shields.io/badge/version-1.3.2-0E7697?style=flat-square)](./Shell-Shockers-Mod-Menu.user.js)
+[![Version](https://img.shields.io/badge/version-1.4.0-0E7697?style=flat-square)](./Shell-Shockers-Mod-Menu.user.js)
 [![License: MIT](https://img.shields.io/badge/license-MIT-lightgrey?style=flat-square)](./LICENSE)
 
 </div>
@@ -51,7 +51,7 @@ The script turns on right away. A script with "theme" in its name goes in the **
 > [!IMPORTANT]
 > If Tampermonkey also runs the script, turn it off in Tampermonkey. Otherwise it runs twice, and the menu can't switch off the Tampermonkey copy.
 
-- **To update** a script, add the new version the same way. A script with the same name and namespace replaces the old one and keeps its saved settings.
+- **To update** a script you added from a link, press **Check for updates** in the footer. A card gets an **Update** button when the link has a newer version. Nothing is checked until you press it. You can also add the new version by hand: a script with the same name and namespace replaces the old one and keeps its saved settings.
 - **To remove** one, click **Remove** on its card, then **Remove it?** to confirm. This deletes its code and everything it saved.
 
 ### What turning a script off does
@@ -161,6 +161,9 @@ If `enable()` or `disable()` throws, the card shows the error and the switch sta
 After each change the menu fires `ssmodmenu:change` on `window`, with `{ id, enabled }` in `event.detail`.
 
 ## Changelog
+
+### 1.4.0 — 2026-10-23
+- **Check for updates:** a footer button that looks at the link each script was added from and puts an **Update** button on the cards that have a newer version, so a mod added inside the menu, Better HUD included, no longer stays on the version you added. It runs only when you press it, and an update keeps the script's saved settings.
 
 ### 1.3.2 — 2026-10-21
 - **The menu makes the game's close sound every time it closes,** the one the Settings window makes. With "reduce motion" turned on in your system or browser the menu closed without it; it now sounds the same with or without the fade.

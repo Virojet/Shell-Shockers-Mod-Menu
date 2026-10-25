@@ -8,8 +8,9 @@
 
 [![Install Mod Menu](https://img.shields.io/badge/Install_Mod_Menu-one_click-2ea44f?style=for-the-badge&logo=tampermonkey&logoColor=white)](https://raw.githubusercontent.com/Virojet/Shell-Shockers-Mod-Menu/main/Shell-Shockers-Mod-Menu.user.js)
 
-[![Version](https://img.shields.io/badge/version-1.4.0-0E7697?style=flat-square)](./Shell-Shockers-Mod-Menu.user.js)
+[![Version](https://img.shields.io/badge/version-1.4.1-0E7697?style=flat-square)](./Shell-Shockers-Mod-Menu.user.js)
 [![License: MIT](https://img.shields.io/badge/license-MIT-lightgrey?style=flat-square)](./LICENSE)
+[![Installs](https://img.shields.io/badge/dynamic/json?url=https%3A%2F%2Fabacus.jasoncameron.dev%2Fget%2Fvirojet-mod-menu%2Finstalls&query=%24.value&label=installs&color=2ea44f&style=flat-square)](#privacy)
 
 </div>
 
@@ -160,7 +161,15 @@ If `enable()` or `disable()` throws, the card shows the error and the switch sta
 
 After each change the menu fires `ssmodmenu:change` on `window`, with `{ id, enabled }` in `event.detail`.
 
+## Privacy
+
+- **Install count:** the first time it runs, one anonymous hit goes to a public counter ([Abacus](https://abacus.jasoncameron.dev)) so the installs badge above stays current. No settings, scripts, names or IDs. It's sent once per browser; the `ssmm-install-counted` key in site storage remembers it.
+- **Scripts you add** are downloaded from the link you give, and **Check for updates** looks at that same link, only when you press it. They are kept in your browser.
+
 ## Changelog
+
+### 1.4.1 — 2026-10-25
+- **Install count:** an anonymous count of how many browsers run the Mod Menu, so the installs badge above can show it. See [Privacy](#privacy). Nothing else changed.
 
 ### 1.4.0 — 2026-10-23
 - **Check for updates:** a footer button that looks at the link each script was added from and puts an **Update** button on the cards that have a newer version, so a mod added inside the menu, Better HUD included, no longer stays on the version you added. It runs only when you press it, and an update keeps the script's saved settings.

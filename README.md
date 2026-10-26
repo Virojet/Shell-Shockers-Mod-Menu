@@ -8,7 +8,7 @@
 
 [![Install Mod Menu](https://img.shields.io/badge/Install_Mod_Menu-one_click-2ea44f?style=for-the-badge&logo=tampermonkey&logoColor=white)](https://raw.githubusercontent.com/Virojet/Shell-Shockers-Mod-Menu/main/Shell-Shockers-Mod-Menu.user.js)
 
-[![Version](https://img.shields.io/badge/version-1.4.1-0E7697?style=flat-square)](./Shell-Shockers-Mod-Menu.user.js)
+[![Version](https://img.shields.io/badge/version-1.5.0-0E7697?style=flat-square)](./Shell-Shockers-Mod-Menu.user.js)
 [![License: MIT](https://img.shields.io/badge/license-MIT-lightgrey?style=flat-square)](./LICENSE)
 [![Installs](https://img.shields.io/badge/dynamic/json?url=https%3A%2F%2Fabacus.jasoncameron.dev%2Fget%2Fvirojet-mod-menu%2Finstalls&query=%24.value&label=installs&color=2ea44f&style=flat-square)](#privacy)
 
@@ -105,6 +105,7 @@ Mods Tampermonkey runs show up here too:
 | **Blossom V4** theme | Switches it on or off live. |
 | **Fuji Dusk** theme | Switches it on or off live. Its own settings open from the **Settings** button on its card. |
 | **Fuji Dark** theme | Switches it on or off live. It adds itself to the menu (private theme, not published). |
+| **Gojo** theme | Switches it on or off live. It adds itself to the menu (private theme, not published). |
 | **[Better HUD](https://github.com/Virojet/Shell-Shockers-Better-Hud-Mod)** | Listed as always on. **Settings** jumps to Better HUD's MODS tab, where its own switches are. |
 | Any mod that registers itself | Turned on or off live. See [For mod authors](#for-mod-authors). |
 
@@ -167,6 +168,9 @@ After each change the menu fires `ssmodmenu:change` on `window`, with `{ id, ena
 - **Scripts you add** are downloaded from the link you give, and **Check for updates** looks at that same link, only when you press it. They are kept in your browser.
 
 ## Changelog
+
+### 1.5.0 — 2026-10-26
+- **A look for the Gojo theme:** black glass over its wallpaper, in the theme's own black, white and gray, with white for what's on. A switch that is on has a dark knob, so it still shows against the white.
 
 ### 1.4.1 — 2026-10-25
 - **Install count:** an anonymous count of how many browsers run the Mod Menu, so the installs badge above can show it. See [Privacy](#privacy). Nothing else changed.

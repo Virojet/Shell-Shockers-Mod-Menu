@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Shell Shockers Mod Menu
 // @namespace    https://github.com/Virojet
-// @version      1.4.1
+// @version      1.5.0
 // @description  One menu for your Shell Shockers mods. Add any userscript, switch themes and turn mods on or off without reloading.
 // @author       Virojet
 // @license      MIT
@@ -100,7 +100,7 @@
   "use strict";
   if (window.ssModMenu) return;
 
-  const VERSION = "1.4.1";
+  const VERSION = "1.5.0";
   // Saved before anything can wrap it: the menu's own record of page changes uses it.
   const NativeMO = window.MutationObserver;
   const STORE = "ssmm.v1";
@@ -1312,6 +1312,44 @@
       --mm-lift: 0 1.6em 4.5em rgba(0, 0, 0, .65);
       --mm-title-shade: .1em .1em 0 rgba(0, 0, 0, .85);
     }
+    /* Gojo: black glass over his wallpaper in black, white and gray, with white for what's on. */
+    :host([data-skin="gojo"]) {
+      --mm-ink: #e9ebf5;
+      --mm-sub: rgba(233, 235, 245, .8);
+      --mm-head: #f7f8ff;
+      --mm-head-sub: rgba(191, 195, 214, .92);
+      --mm-panel: linear-gradient(rgba(8, 9, 13, .8), rgba(8, 9, 13, .9)), var(--gj-art, none) center / cover, #08090d;
+      --mm-veil: rgba(8, 9, 13, .92);
+      --mm-frame: var(--gj-ivory, #e9ebf5);
+      --mm-sheen: rgba(247, 248, 255, .12);
+      --mm-glass: rgba(0, 0, 0, .44);
+      --mm-glass-hi: rgba(34, 36, 46, .62);
+      --mm-glass-on: rgba(247, 248, 255, .11);
+      --mm-edge: rgba(205, 208, 222, .22);
+      --mm-edge-hi: rgba(247, 248, 255, .6);
+      --mm-line: rgba(205, 208, 222, .24);
+      --mm-lip: inset 0 1px 0 rgba(247, 248, 255, .07);
+      --mm-shade: 0 0 transparent;
+      --mm-shade-hi: 0 .75em 1.5em -.6em rgba(0, 0, 0, .6);
+      --mm-track: rgba(255, 255, 255, .16);
+      --mm-track-shade: inset 0 2px 4px rgba(0, 0, 0, .45);
+      --mm-on: linear-gradient(180deg, #fff, #cdd0de);
+      --mm-on-edge: #f7f8ff;
+      --mm-on-ring: rgba(247, 248, 255, .55);
+      --mm-bar: rgba(0, 0, 0, .5);
+      --mm-bar-shade: inset 0 1px 0 rgba(247, 248, 255, .07);
+      --mm-btn: rgba(255, 255, 255, .08);
+      --mm-btn-hi: rgba(247, 248, 255, .16);
+      --mm-kbd: rgba(255, 255, 255, .1);
+      --mm-toast: rgba(10, 11, 15, .96);
+      --mm-toast-shade: 0 .75em 2em rgba(0, 0, 0, .55);
+      --mm-err: #f4b6ae;
+      --mm-focus: #f7f8ff;
+      --mm-close-hi: rgba(247, 248, 255, .12);
+      --mm-backdrop: rgba(0, 0, 0, .55);
+      --mm-lift: 0 1.6em 4.5em rgba(0, 0, 0, .65);
+      --mm-title-shade: .1em .1em 0 rgba(0, 0, 0, .85);
+    }
     /* Fuji Dusk paints with its own tokens, which reach in here from <html>. */
     :host([data-skin="fuji-dusk"]) {
       --mm-ink: var(--fd-text, #f4f0e7);
@@ -1457,6 +1495,10 @@
     input:checked + .switch::after { transform: translateX(1.25em); }
     input:checked + .radio::after { transform: scale(1); }
     input:focus-visible + .switch, input:focus-visible + .radio, button:focus-visible { outline: 2px solid var(--mm-focus); outline-offset: 3px; }
+    /* Gojo's "on" fill is white, which would swallow the white knob, so the knob turns dark while it sits on the fill. */
+    :host([data-skin="gojo"]) .switch::after { transition: transform .28s var(--mm-spring), background-color .2s; }
+    :host([data-skin="gojo"]) .radio::after { transition: transform .24s var(--mm-spring), background-color .2s; }
+    :host([data-skin="gojo"]) input:checked + .switch::after, :host([data-skin="gojo"]) input:checked + .radio::after { background-color: #0c0c11; }
 
     .btn {
       flex: none; display: inline-flex; align-items: center; justify-content: center; gap: .45em; height: 2.2em; padding: 0 .9em;
@@ -1869,7 +1911,7 @@
   }
 
   // The look follows the active theme. A theme added as a script, under one of the known names, gets its look too.
-  const SKINS = { "cherry-blossom": /cherry[\s-]*blossom/i, "blossom-v4": /blossom[\s-]*v4/i, "fuji-dusk": /fuji[\s-]*dusk/i, "fuji-dark": /fuji[\s-]*dark/i };
+  const SKINS = { "cherry-blossom": /cherry[\s-]*blossom/i, "blossom-v4": /blossom[\s-]*v4/i, "fuji-dusk": /fuji[\s-]*dusk/i, "fuji-dark": /fuji[\s-]*dark/i, "gojo": /gojo/i };
   const skinOf = t => !t ? "" : Object.hasOwn(SKINS, t.id) ? t.id : (t.script && Object.keys(SKINS).find(k => SKINS[k].test(t.script.name))) || "";
   // Any other theme: the colour its text ends up with decides between the light glass and the dark.
   let toneOf = null;

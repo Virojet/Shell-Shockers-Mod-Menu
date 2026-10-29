@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Shell Shockers Mod Menu
 // @namespace    https://github.com/Virojet
-// @version      1.5.0
+// @version      1.6.0
 // @description  One menu for your Shell Shockers mods. Add any userscript, switch themes and turn mods on or off without reloading.
 // @author       Virojet
 // @license      MIT
@@ -94,13 +94,13 @@
    The queue works whichever script Tampermonkey runs first. If the saved choice is "off", the menu calls
    disable() right away, before the first paint. Optional: version, defaultOn (false = starts off),
    active (false = not applied yet), openSettings() (adds a Settings button), alwaysOn (listed, no switch).
-   window.ssModMenu has register, setEnabled, isEnabled, setTheme, list, addScript, removeScript, open and close;
+   window.ssModMenu has register, setEnabled, isEnabled, setTheme, list, addScript, editScript, removeScript, open and close;
    it fires "ssmodmenu:change" on window with { id, enabled } after each change. */
 (() => {
   "use strict";
   if (window.ssModMenu) return;
 
-  const VERSION = "1.5.0";
+  const VERSION = "1.6.0";
   // Saved before anything can wrap it: the menu's own record of page changes uses it.
   const NativeMO = window.MutationObserver;
   const STORE = "ssmm.v1";
@@ -226,7 +226,7 @@
   /* ---- Scripts the menu runs ---- */
   // Saved apart from the choices above: the list, then each script's code, the files it @requires, its
   // @resources and its GM values under keys of their own. Code is read synchronously at start-up, so a script set
-  // to run at document-start still runs before the game.
+  // to run at document-start still runs before the game. What doesn't fit goes to IndexedDB (below).
   const store = {
     get: k => { try { return localStorage.getItem(k); } catch { return null; } },
     set: (k, v) => localStorage.setItem(k, v), // throws when storage is full
@@ -240,6 +240,146 @@
     if (Array.isArray(a)) scripts = a.filter(s => s && typeof s.key === "string" && typeof s.name === "string");
   } catch { /* nothing saved yet */ }
   const saveScripts = () => store.set(LIST, JSON.stringify(scripts));
+
+  // No limit on how many scripts the menu holds. localStorage has room for a few MB per site, shared with the game,
+  // so the big parts of a script (its code, the files it @requires, its @resources) only go there while the menu's
+  // share stays under ROOM characters, scripts that start with the page first. The rest is kept in IndexedDB, which
+  // grows with the free disk space, and is read back as the page starts: a script kept there starts as soon as that's
+  // done, a moment later. SHELVED lists which parts are there.
+  const SHELVED = "ssmm.idb", ROOM = 2e6, IDB = window.indexedDB;
+  let shelved = new Set();
+  try {
+    const a = JSON.parse(store.get(SHELVED));
+    if (Array.isArray(a)) shelved = new Set(a.filter(k => typeof k === "string"));
+  } catch { /* nothing kept there */ }
+  let shelf = shelved.size ? null : new Map(), db = null; // shelf: what IndexedDB holds, once read
+  const openDb = () => db || (db = new Promise((ok, no) => {
+    const r = IDB.open("ssmm", 1);
+    r.onupgradeneeded = () => r.result.createObjectStore("files");
+    r.onsuccess = () => ok(r.result);
+    r.onerror = () => no(r.error);
+    r.onblocked = () => no(new Error("IndexedDB is blocked"));
+  }).catch(err => { db = null; throw err; }));
+  // One transaction for the requests fn makes; their results once it has completed.
+  const idb = async (fn, mode = "readwrite") => {
+    const tx = (await openDb()).transaction("files", mode), reqs = [].concat(fn(tx.objectStore("files")));
+    await new Promise((ok, no) => { tx.oncomplete = ok; tx.onerror = tx.onabort = () => no(tx.error || new Error("IndexedDB failed")); });
+    return reqs.length > 1 ? reqs.map(r => r.result) : reqs[0].result;
+  };
+  const shelfRead = shelf ? Promise.resolve() : (async () => {
+    try {
+      const [keys, vals] = await idb(os => [os.getAllKeys(), os.getAll()], "readonly");
+      shelf = new Map(keys.map((k, i) => [k, vals[i]]));
+    } catch (err) {
+      shelf = new Map();
+      console.warn("[Mod Menu] Couldn't read the scripts kept in IndexedDB:", err);
+    }
+  })();
+  const lsSize = skip => {
+    let n = 0;
+    try {
+      for (let i = 0; i < localStorage.length; i++) {
+        const k = localStorage.key(i);
+        if (k !== skip && k.startsWith("ssmm.")) n += k.length + (localStorage.getItem(k) || "").length;
+      }
+    } catch { /* blocked */ }
+    return n;
+  };
+  const files = {
+    // undefined: kept in IndexedDB, not read back yet.
+    get: k => shelved.has(k) ? (shelf ? shelf.get(k) ?? null : undefined) : store.get(k),
+    ready: key => !!shelf || ![codeKey, libKey, resKey].some(f => shelved.has(f(key))),
+    // Save all of a script's parts together. IndexedDB changes share one transaction, and localStorage changes
+    // have an undo copy until it commits, so a refused write cannot leave half of an edit saved.
+    async write(key, code, lib, res, early, list) {
+      await shelfRead;
+      let conn = null;
+      try { conn = await openDb(); } catch { /* small scripts can still use localStorage */ }
+      const next = new Set(shelved), cache = new Map(shelf), undo = new Map();
+      let tx = null, done;
+      const disk = () => {
+        if (!tx) {
+          if (!conn) throw new Error("IndexedDB is unavailable");
+          tx = conn.transaction("files", "readwrite");
+          done = new Promise((ok, no) => { tx.oncomplete = ok; tx.onerror = tx.onabort = () => no(tx.error || new Error("IndexedDB failed")); });
+          done.catch(() => { /* handled with the localStorage rollback below */ });
+        }
+        return tx.objectStore("files");
+      };
+      const set = (k, v) => {
+        const before = store.get(k);
+        store.set(k, v);
+        if (!undo.has(k)) undo.set(k, before);
+      };
+      const del = k => {
+        if (!undo.has(k)) undo.set(k, store.get(k));
+        store.del(k);
+      };
+      const shelve = (k, v) => {
+        disk().put(v, k);
+        next.add(k);
+        cache.set(k, v);
+        del(k);
+      };
+      const unshelve = k => {
+        if (!next.has(k)) return;
+        disk().delete(k);
+        next.delete(k);
+        cache.delete(k);
+      };
+      // Later-starting scripts move out first when document-start scripts or the saved lists need room.
+      const late = skip => new Set(list.filter(s => s.runAt !== "document-start" && s.key !== skip).flatMap(s => [codeKey, libKey, resKey].map(f => f(s.key))));
+      const biggest = only => {
+        let big = "", n = -1;
+        for (let i = 0; i < localStorage.length; i++) {
+          const k = localStorage.key(i), l = /^ssmm\.(code|lib|res)\./.test(k) && !next.has(k) && (!only || only.has(k)) ? (store.get(k) || "").length : -1;
+          if (l > n) [big, n] = [k, l];
+        }
+        if (!big) return false;
+        shelve(big, store.get(big));
+        return true;
+      };
+      try {
+        for (const [k, v] of [[codeKey(key), code], [libKey(key), lib], [resKey(key), res]]) {
+          if (v == null) { del(k); unshelve(k); continue; }
+          const fits = () => lsSize(k) + k.length + v.length <= ROOM;
+          if (early) while (!fits() && biggest(late(key))) { /* move another later-starting part */ }
+          let local = false;
+          if (fits()) { try { set(k, v); local = true; } catch { /* full: use IndexedDB */ } }
+          if (local) unshelve(k);
+          else shelve(k, v);
+        }
+        for (;;) {
+          try {
+            set(SHELVED, JSON.stringify([...next]));
+            set(LIST, JSON.stringify(list));
+            break;
+          } catch (err) {
+            if (!biggest(late()) && !biggest()) throw err;
+          }
+        }
+        await done;
+        shelved = next;
+        shelf = cache;
+      } catch (err) {
+        try { tx?.abort(); } catch { /* already finished */ }
+        if (done) await done.catch(() => { /* aborted */ });
+        const changed = [...undo].filter(([k, v]) => store.get(k) !== v);
+        // Free the new values first so the previous values fit even when localStorage is full.
+        for (const [k] of changed) store.del(k);
+        for (const [k, v] of changed) if (v != null) store.set(k, v);
+        throw err;
+      }
+    },
+  };
+  // Saves and removals cannot overtake one another while IndexedDB is committing.
+  let writes = Promise.resolve(), removal = 0;
+  const removedAt = new Map();
+  const changeScripts = fn => {
+    const result = writes.then(fn);
+    writes = result.catch(() => { /* the next change may still succeed */ });
+    return result;
+  };
 
   // The ==UserScript== block. Translated lines (@name:fr) are skipped.
   function parseMeta(code) {
@@ -795,7 +935,7 @@
     const openInTab = url => { window.open(url, "_blank", "noopener"); return { close() { }, closed: false }; };
     const notification = (d, title) => { const text = d && typeof d === "object" ? d.text || d.title : d || title; if (text) toast(`${run.m.name}: ${text}`); };
     let res = {};
-    try { res = JSON.parse(store.get(resKey(s.key))) || {}; } catch { /* none */ }
+    try { res = JSON.parse(files.get(resKey(s.key))) || {}; } catch { /* none */ }
     const getResourceURL = name => res[name] || null;
     const getResourceText = name => {
       const u = res[name];
@@ -835,22 +975,23 @@
     };
   }
 
-  // Scripts that run later than document-start wait for the page to be parsed, as in Tampermonkey.
+  // Scripts that run later than document-start wait for the page to be parsed, as in Tampermonkey. One kept in
+  // IndexedDB waits until it has been read back.
   const pendingStart = new Set();
   let booted = false;
-  function startScript(m) {
+  function startScript(m, atLoad) {
     const s = m.script;
     m.warn = m.note = "";
     m.reload = false;
     if (!runsHere(s)) { m.note = "It isn't set to run on this site."; return; }
-    if (document.readyState === "loading" && s.runAt !== "document-start") { pendingStart.add(m); return; }
-    const code = store.get(codeKey(s.key));
+    if ((document.readyState === "loading" && s.runAt !== "document-start") || !files.ready(s.key)) { pendingStart.add(m); return; }
+    const code = files.get(codeKey(s.key));
     if (code == null) throw new Error("its code is missing. Remove it and add it again");
     patchPage();
     const run = new Run(m);
     let fn;
     try {
-      fn = new Function(...API_NAMES, `${store.get(libKey(s.key)) || ""}\n${code}\n//# sourceURL=mm-script:/${run.n}/${slug(s.name)}.user.js`);
+      fn = new Function(...API_NAMES, `${files.get(libKey(s.key)) || ""}\n${code}\n//# sourceURL=mm-script:/${run.n}/${slug(s.name)}.user.js`);
     } catch (err) {
       throw new Error(`its code has an error: ${err.message}`);
     }
@@ -871,9 +1012,12 @@
     run.booting = false;
     run.props = changes(before);
     run.hooks = hooksTheGame(run.props);
-    if (run.hooks && booted) {
+    // Started as part of the page's start (read back from IndexedDB a moment late), a reload wouldn't start it sooner.
+    if (run.hooks && booted && !atLoad) {
       m.note = "Parts of it start with the page. Reload to start them.";
       m.reload = true;
+    } else if (run.hooks && atLoad && s.runAt === "document-start" && document.readyState !== "loading") {
+      m.note = "It's kept in IndexedDB, so it started a moment after the page and may have missed the game loading.";
     }
   }
   function stopScript(m) {
@@ -886,11 +1030,11 @@
     m.reload = run.hooks || run.stuck;
     m.note = m.reload ? "Some of its changes stay until you reload." : "";
   }
-  function runPending() {
+  function runPending(atLoad) {
     for (const m of [...pendingStart]) {
       pendingStart.delete(m);
       try {
-        startScript(m);
+        startScript(m, atLoad);
       } catch (err) {
         m.active = false;
         m.error = `Couldn't turn it on: ${(err && err.message) || err}`;
@@ -944,21 +1088,39 @@
 
   // Adds a script from a link or its code, or updates one already added (same @name and @namespace). It's
   // turned on right away.
-  async function addScript(source) {
-    let code = String(source ?? "").trim(), from = "";
-    if (!code) throw new Error("Paste a link or a script first.");
-    if (/^https?:\/\/\S+$/i.test(code)) { from = code; code = await download(code); }
-    if (/^\s*<(?:!doctype|html)/i.test(code)) throw new Error("That link opens a web page, not a script. Use the link to the .user.js file.");
+  function addScript(source) {
+    const since = removal;
+    return changeScripts(() => saveScript(source, null, since));
+  }
+  // Saves changed code for a script already added (the Edit view). It keeps its place: its settings, its on/off
+  // choice, its group and the link it came from stay, whatever the new code calls itself. One that's on starts again.
+  function editScript(id, code) {
+    const since = removal;
+    return changeScripts(() => {
+      const s = mods.get(id)?.script;
+      return s ? saveScript(code, s, since) : Promise.reject(new Error("That script isn't in the menu any more."));
+    });
+  }
+  async function saveScript(source, keep, since) {
+    let code = String(source ?? "").trim(), from = keep ? keep.from || "" : "";
+    if (!code) throw new Error(keep ? "There's no code to save. Cancel keeps it as it was." : "Paste a link or a script first.");
+    if (!keep && /^https?:\/\/\S+$/i.test(code)) { from = code; code = await download(code); }
+    if (!keep && /^\s*<(?:!doctype|html)/i.test(code)) throw new Error("That link opens a web page, not a script. Use the link to the .user.js file.");
     const { meta, block } = parseMeta(code);
     if (/^shell shockers mod menu$/i.test(meta.name)) throw new Error("That's the Mod Menu itself.");
     const name = meta.name.slice(0, 120) || "Pasted script";
-    const key = hash(block ? meta.namespace + "\n" + name : code);
+    const key = keep ? keep.key : hash(block ? meta.namespace + "\n" + name : code);
+    await shelfRead;
+    // An edit that leaves the @require and @resource lines as they were keeps the files already downloaded.
+    const was = keep && parseMeta(files.get(codeKey(key)) || "").meta, same = (a, b) => JSON.stringify(a) === JSON.stringify(b);
     let lib = "";
-    for (const u of meta.require) {
+    if (was && same(was.require, meta.require)) lib = files.get(libKey(key)) || "";
+    else for (const u of meta.require) {
       try { lib += (await download(u)) + "\n;\n"; } catch (err) { throw new Error(`Couldn't download ${fileName(u)}, a file it needs. ${err.message}`); }
     }
-    const res = {};
-    for (const line of meta.resource) {
+    let res = {};
+    if (was && same(was.resource, meta.resource)) { try { res = JSON.parse(files.get(resKey(key))) || {}; } catch { /* none */ } }
+    else for (const line of meta.resource) {
       const [, rn, ru] = /^(\S+)\s+(\S+)/.exec(line) || [];
       if (!rn) continue;
       try {
@@ -971,40 +1133,54 @@
     const s = {
       key, name, namespace: meta.namespace, version: meta.version.slice(0, 24), description: meta.description.slice(0, 300), author: meta.author,
       runAt: meta["run-at"] || "document-idle", match: meta.match, include: meta.include, exclude: meta.exclude, excludeMatch: meta["exclude-match"],
-      grant: meta.grant, group: /theme/i.test(name) ? "theme" : "mod", from, meta: block.slice(0, 6000),
+      grant: meta.grant, group: keep ? keep.group : /theme/i.test(name) ? "theme" : "mod", from, meta: block.slice(0, 6000),
     };
     const id = "us." + key, old = mods.get(id);
+    const wasRemoved = () => (removedAt.get(id) || 0) > since;
+    if (wasRemoved()) throw new Error("That script was removed while it was being saved.");
     if (old) apply(old, false);
     const list = scripts.filter(x => x.key !== key);
     const at = scripts.findIndex(x => x.key === key);
     list.splice(at < 0 ? list.length : at, 0, s);
     try {
-      store.set(codeKey(key), code);
-      if (lib) store.set(libKey(key), lib); else store.del(libKey(key));
-      if (Object.keys(res).length) store.set(resKey(key), JSON.stringify(res)); else store.del(resKey(key));
-      store.set(LIST, JSON.stringify(list));
-    } catch {
-      if (!old) [codeKey, libKey, resKey].forEach(k => store.del(k(key)));
-      if (old) sync();
-      throw new Error("There's no room left to save it. Remove a script you don't use, then try again.");
+      await files.write(key, code, lib || null, Object.keys(res).length ? JSON.stringify(res) : null, s.runAt === "document-start", list);
+    } catch (err) {
+      console.warn("[Mod Menu] Couldn't save", name, err);
+      if (old && !wasRemoved()) sync();
+      throw new Error("There's no room left to save it. Free some disk space, or check that the browser lets this site store data, then try again.");
     }
+    if (wasRemoved()) throw new Error("That script was removed while it was being saved.");
     scripts = list;
     if (old) mods.delete(id);
-    state.on[id] = true;
-    if (s.group === "theme") state.theme = id;
+    // An edited theme doesn't take over the way one installed this visit would.
+    if (keep) seenBefore.add(id);
+    else {
+      state.on[id] = true;
+      if (s.group === "theme") state.theme = id;
+    }
     save();
     register(scriptDef(s));
+    // What the old code couldn't undo is still on the page, so its card keeps asking for a reload.
+    const m = mods.get(id);
+    if (old?.reload && m && !m.reload) {
+      m.reload = true;
+      m.note = m.note || "Some of its old changes stay until you reload.";
+      paint();
+    }
     return id;
   }
   function removeScript(id) {
     const m = mods.get(id);
     if (!m?.script) return false;
+    removedAt.set(id, ++removal);
     apply(m, false);
     pendingStart.delete(m);
     const key = m.script.key;
-    [codeKey, libKey, resKey, valKey].forEach(k => store.del(k(key)));
+    store.del(valKey(key));
     scripts = scripts.filter(x => x.key !== key);
     try { saveScripts(); } catch { /* the list only got shorter */ }
+    changeScripts(() => files.write(key, null, null, null, false, scripts))
+      .catch(err => console.warn("[Mod Menu] Couldn't remove the saved files:", err));
     delete state.on[id];
     if (state.theme === id) state.theme = "none";
     state.seen = state.seen.filter(x => x !== id);
@@ -1131,7 +1307,7 @@
   /* ---- Public API ---- */
   window.ssModMenu = Object.freeze({
     version: VERSION,
-    register, unregister, isEnabled, setEnabled, setTheme, addScript, removeScript,
+    register, unregister, isEnabled, setEnabled, setTheme, addScript, editScript, removeScript,
     getTheme: () => activeTheme()?.id || "none",
     list: () => [...mods.values()].map(m => ({ id: m.id, name: m.name, group: m.group, version: m.version, enabled: m.active, alwaysOn: m.alwaysOn, script: !!m.script })),
     open: () => open(), close: () => close(), toggle: () => toggle(),
@@ -1520,7 +1696,13 @@
     }
     .empty p { margin: 0; max-width: 26em; }
 
-    .add { min-height: 0; overflow-y: auto; }
+    .add, .edit { min-height: 0; overflow-y: auto; }
+    /* A script's code gets a wider panel and a box that doesn't wrap its lines. */
+    .panel.wide { width: min(54em, calc(100vw - 32px)); }
+    .edit textarea {
+      height: min(32em, calc(100vh - 25em - 40px)); min-height: 8em; max-height: none;
+      white-space: pre; overflow-wrap: normal; overflow: auto; tab-size: 2;
+    }
     .addbox {
       display: grid; gap: .75em; padding: .875em; border: 1px solid var(--mm-edge); border-radius: .875em;
       background-color: var(--mm-glass); box-shadow: var(--mm-lip), var(--mm-shade);
@@ -1599,6 +1781,7 @@
 
   let host, shadow, dialog, panel, listEl, themeGroup, modGroup, themeBox, modBox, countEl, emptyEl, keyBtn, keyCap, hintEl, toastEl, probe;
   let addView, addBtn, checkBtn, codeBox, addMsg, goBtn, pickBtn, launcher, toastTimer = 0, closing = 0, listening = false;
+  let editView, editTitle, editIntro, editBox, editMsg, saveBtn, discardBtn, editing = "", draft = null, discarding = 0;
   let adding = false, busy = false, checking = false, removing = null, inputs = 0, dragDepth = 0;
   const motion = window.matchMedia?.("(prefers-reduced-motion: reduce)");
   const calm = () => !!motion?.matches;
@@ -1648,6 +1831,20 @@
             </div>
             <input type="file" accept=".js,text/javascript,application/javascript" hidden>
           </section>
+          <section class="edit" hidden>
+            <h3 id="mm-edit-title">Edit script</h3>
+            <div class="addbox">
+              <p class="addnote"></p>
+              <textarea spellcheck="false" autocomplete="off" autocapitalize="off" aria-labelledby="mm-edit-title"></textarea>
+              <p class="addmsg" role="status"></p>
+              <div class="addbar">
+                <button type="button" class="btn copy" title="Copy the whole script, with any changes not saved yet">Copy</button>
+                <span class="grow"></span>
+                <button type="button" class="btn quiet cancel" data-sound="">Cancel</button>
+                <button type="button" class="btn go" data-sound="" title="Ctrl+S">Save</button>
+              </div>
+            </div>
+          </section>
           <footer>
             <span class="mmver">Mod Menu v${VERSION}</span>
             <span class="hint" role="status"></span>
@@ -1682,6 +1879,14 @@
     goBtn = q(".go");
     pickBtn = q(".pick");
     const fileIn = q("input[type=file]");
+    editView = q(".edit");
+    const eq = s => editView.querySelector(s);
+    editTitle = eq("h3");
+    editIntro = eq(".addnote");
+    editBox = eq("textarea");
+    editMsg = eq(".addmsg");
+    saveBtn = eq(".go");
+    discardBtn = eq(".cancel");
 
     // Keys pressed inside the open menu stay out of the game. Once it closes, they reach the game,
     // even while the browser hasn't moved focus out of the menu yet.
@@ -1707,7 +1912,10 @@
       closing = 0;
       dialog.classList.remove("out");
       stopListening();
-      if (!busy) showAdd(false);
+      if (!busy) {
+        showAdd(false);
+        showEdit(null);
+      }
     });
     keyBtn.addEventListener("click", () => listening ? stopListening() : startListening());
     listEl.addEventListener("change", e => {
@@ -1722,11 +1930,12 @@
       e.preventDefault();
       const d = b.dataset;
       if ("add" in d) return showAdd(true);
-      const m = mods.get(d.settings || d.reload || d.remove || d.update || d.of);
+      const m = mods.get(d.settings || d.reload || d.remove || d.update || d.edit || d.of);
       if (!m) return;
       if (d.reload) return location.reload();
       if (d.remove) return removeClicked(m);
       if (d.update) return updateClicked(m);
+      if (d.edit) return showEdit(m);
       // A mod's settings or command opens over the game, so the menu gets out of the way at once.
       close(true);
       if (d.cmd) return runCommand(m, d.cmd);
@@ -1753,6 +1962,14 @@
       if (f) addFrom(f);
     });
     goBtn.addEventListener("click", () => addFrom(codeBox.value));
+    eq(".copy").addEventListener("click", copyCode);
+    discardBtn.addEventListener("click", cancelEdit);
+    saveBtn.addEventListener("click", saveEdit);
+    editBox.addEventListener("input", edited);
+    // Ctrl+S saves anywhere in the Edit view, instead of the browser saving the page.
+    editView.addEventListener("keydown", e => {
+      if ((e.ctrlKey || e.metaKey) && !e.altKey && (e.code === "KeyS" || e.key === "Enter")) { e.preventDefault(); saveEdit(); }
+    });
     codeBox.addEventListener("keydown", e => {
       if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) { e.preventDefault(); addFrom(codeBox.value); }
     });
@@ -1850,7 +2067,8 @@
     if (m.reload) btns.push(["", "Reload", "reload", "Reload the game"]);
     if ((m.alwaysOn || m.active) && settingsOf(m)) btns.push(["", "Settings", "settings"]);
     if (m.script && updates.has(m.id)) btns.push(["", "Update", "update", `Update to version ${updates.get(m.id)}. Its settings are kept.`]);
-    if (m.script) btns.push(removing?.id === m.id ? ["danger", "Remove it?", "remove", "Click again to remove it and everything it saved", "ui_reset"] : ["quiet", "Remove", "remove"]);
+    if (m.script) btns.push(["quiet", "Edit", "edit", "See its code, change it or copy it", "ui_toggletab"]);
+    if (m.script) btns.push(removing?.id === m.id ?["danger", "Remove it?", "remove", "Click again to remove it and everything it saved", "ui_reset"] : ["quiet", "Remove", "remove"]);
     const bs = btns.join("|");
     if (s.btns !== bs) {
       s.btns = bs;
@@ -1878,7 +2096,7 @@
     if (!d) return "";
     if (n.name === "mm-theme") return "t:" + n.value;
     if (d.cmd) return `c:${d.of}:${d.cmd}`;
-    for (const k of ["id", "settings", "reload", "remove", "update"]) if (d[k]) return k + ":" + d[k];
+    for (const k of ["id", "settings", "reload", "remove", "update", "edit"]) if (d[k]) return k + ":" + d[k];
     return "";
   };
   function render() {
@@ -1980,8 +2198,8 @@
   function toggle() {
     dialog?.open && !closing ? close() : open();
   }
-  // Esc steps back first: out of choosing a key, then out of Add a script, then out of the menu. Each sounds like
-  // the button that does the same.
+  // Esc steps back first: out of choosing a key, then out of Add a script or Edit (as Cancel does there), then out of
+  // the menu. Each sounds like the button that does the same.
   function back() {
     if (listening) {
       stopListening();
@@ -1989,7 +2207,8 @@
     } else if (adding) {
       showAdd(false);
       sound("ui_toggletab");
-    } else close();
+    } else if (editing) cancelEdit();
+    else close();
   }
   // A theme picked in the menu fades the whole screen from the old look to the new one, where the browser can.
   // While it fades, the browser shows a picture of the page, so a click can't reach the menu: the fade then ends at
@@ -2055,11 +2274,19 @@
   }
 
   /* ---- Adding and removing scripts ---- */
+  // One view at a time where the list is: the list, Add a script, or a script's code.
+  function showViews() {
+    listEl.hidden = adding || !!editing;
+    addView.hidden = !adding;
+    editView.hidden = !editing;
+    panel.classList.toggle("wide", !!editing);
+  }
   function showAdd(on) {
     const was = adding;
     adding = on;
-    addView.hidden = !on;
-    listEl.hidden = on;
+    // Add takes the Edit view's place; what was typed there is kept for later.
+    if (on) editing = "";
+    showViews();
     addBtn.setAttribute("aria-expanded", on);
     if (on) {
       if (!busy) {
@@ -2081,7 +2308,9 @@
     busy = on;
     goBtn.disabled = pickBtn.disabled = on;
     goBtn.classList.toggle("busy", on);
-    codeBox.readOnly = on;
+    saveBtn.classList.toggle("busy", on);
+    saveBtn.disabled = on || !dirty();
+    codeBox.readOnly = editBox.readOnly = on;
   }
   async function addFrom(src) {
     if (busy) return;
@@ -2178,6 +2407,130 @@
     } catch (err) {
       console.error("[Mod Menu]", m.name, err);
       toast(`${m.name}: ${(err && err.message) || err}`);
+    }
+  }
+
+  /* ---- Editing a script ---- */
+  // Edit shows the whole saved code of a script the menu runs. Closing the menu keeps what was typed: Edit on the same
+  // script brings it back, as long as its saved code hasn't changed since. A text box reads line breaks as \n, so the
+  // saved code is compared that way.
+  const dirty = () => !!draft && editBox.value !== draft.base;
+  function showEdit(m) {
+    if (m && busy) return;
+    const was = editing, code = m ? files.get(codeKey(m.script.key)) : null;
+    if (m && code === undefined) return toast(`${m.name}'s code is still being read. Try again in a moment.`);
+    if (m && code == null) return toast(`${m.name}: its code is missing. Remove it and add it again.`);
+    editing = m ? m.id : "";
+    let kept = false;
+    if (m) {
+      adding = false;
+      addBtn.setAttribute("aria-expanded", false);
+      kept = draft?.id === m.id && draft.saved === code && dirty();
+      if (!kept) {
+        draft = { id: m.id, saved: code, base: code.replace(/\r\n?/g, "\n") };
+        editBox.value = code;
+        editBox.setSelectionRange(0, 0);
+      }
+      editTitle.textContent = `Edit ${m.name}`;
+      editIntro.textContent = "Save starts it again with your changes and keeps its settings. Copy takes the whole script." +
+        (m.script.from ? " Updating it from its link replaces your changes." : "");
+      editNote(kept ? "Your changes from before are still here. They aren't saved yet." : "");
+      editBox.removeAttribute("aria-invalid");
+      unask();
+      saveBtn.disabled = !dirty();
+    }
+    showViews();
+    if (m) {
+      editBox.focus({ preventScroll: true });
+      if (!kept) editBox.scrollTop = editBox.scrollLeft = 0;
+    } else {
+      render();
+      // Back on the list, focus goes to the card's Edit button (a disabled Save or Cancel may already have lost it). An id
+      // is letters, digits and . _ - only (ID_RE), so it goes in the selector as it is: the game replaces window.CSS.
+      const f = shadow.activeElement;
+      if (was && dialog.open && (!f || editView.contains(f))) (listEl.querySelector(`[data-edit="${was}"]`) || panel).focus({ preventScroll: true });
+    }
+    if (was !== editing && dialog.open) reveal(m ? editView : listEl);
+  }
+  function editNote(text, warn = false) {
+    editMsg.textContent = text;
+    editMsg.classList.toggle("warn", warn);
+  }
+  function edited() {
+    unask();
+    saveBtn.disabled = busy || !dirty();
+    if (!editBox.hasAttribute("aria-invalid")) return;
+    editBox.removeAttribute("aria-invalid");
+    editNote("");
+  }
+  // Copy takes everything in the box. Where the browser won't let the page write to the clipboard, the box is
+  // selected and copied the old way.
+  async function copyCode() {
+    const text = dirty() ? editBox.value : draft?.saved ?? editBox.value, lines = text ? text.split("\n").length : 0;
+    let done = false;
+    try {
+      await navigator.clipboard.writeText(text);
+      done = true;
+    } catch { /* not allowed here */ }
+    if (!done) {
+      const { selectionStart: a, selectionEnd: b, selectionDirection: dir } = editBox;
+      editBox.focus({ preventScroll: true });
+      editBox.select();
+      try { done = document.execCommand("copy"); } catch { /* not allowed either */ }
+      editBox.setSelectionRange(a, b, dir);
+    }
+    editNote(done ? `Copied the whole script: ${lines.toLocaleString()} line${lines === 1 ? "" : "s"}.`
+      : "Couldn't copy it. Click in the box, press Ctrl+A, then Ctrl+C.", !done);
+  }
+  // Cancel leaves the script as it was saved. With changes typed it asks once more: pressing it again (or Esc) within
+  // 4 seconds throws them away.
+  function cancelEdit() {
+    if (busy) return;
+    if (dirty() && !discarding) {
+      discarding = setTimeout(unask, 4000);
+      discardBtn.textContent = "Discard changes?";
+      discardBtn.className = "btn danger cancel";
+      discardBtn.title = "Click again to throw your changes away";
+      sound("ui_click");
+      return;
+    }
+    const threw = dirty();
+    unask();
+    draft = null;
+    editBox.value = "";
+    showEdit(null);
+    sound(threw ? "ui_reset" : "ui_toggletab");
+  }
+  function unask() {
+    if (!discarding) return;
+    clearTimeout(discarding);
+    discarding = 0;
+    discardBtn.textContent = "Cancel";
+    discardBtn.className = "btn quiet cancel";
+    discardBtn.removeAttribute("title");
+  }
+  async function saveEdit() {
+    if (busy || !editing || !dirty()) return;
+    const id = editing;
+    unask();
+    setBusy(true);
+    editBox.removeAttribute("aria-invalid");
+    editNote("Saving…");
+    try {
+      const m = mods.get(await editScript(id, editBox.value));
+      draft = null;
+      editBox.value = "";
+      setBusy(false);
+      showEdit(null);
+      toast(m.error || m.warn ? `Saved ${m.name}, but it ran into a problem. Its card says what.`
+        : m.active ? `Saved ${m.name}. It started again with your changes.` : `Saved ${m.name}. It's off, so the changes apply when you turn it on.`, 6000);
+      sound("ui_playconfirm");
+    } catch (err) {
+      editNote((err && err.message) || String(err), true);
+      editBox.setAttribute("aria-invalid", "true");
+      sound("ui_reset");
+    } finally {
+      setBusy(false);
     }
   }
 
@@ -2307,6 +2660,8 @@
   };
   if (document.documentElement) start();
   else new MutationObserver((_, o) => { if (document.documentElement) { o.disconnect(); start(); } }).observe(document, { childList: true });
+  // Scripts kept in IndexedDB start once they've been read back.
+  if (!shelf) shelfRead.then(() => runPending(true));
   // The themes add themselves at start-up; stop looking a minute after the page has loaded.
   window.addEventListener("load", () => setTimeout(() => watcher.disconnect(), 60000), { once: true });
 

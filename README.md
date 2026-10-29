@@ -8,7 +8,7 @@
 
 [![Install Mod Menu](https://img.shields.io/badge/Install_Mod_Menu-one_click-2ea44f?style=for-the-badge&logo=tampermonkey&logoColor=white)](https://raw.githubusercontent.com/Virojet/Shell-Shockers-Mod-Menu/main/Shell-Shockers-Mod-Menu.user.js)
 
-[![Version](https://img.shields.io/badge/version-1.5.0-0E7697?style=flat-square)](./Shell-Shockers-Mod-Menu.user.js)
+[![Version](https://img.shields.io/badge/version-1.6.0-0E7697?style=flat-square)](./Shell-Shockers-Mod-Menu.user.js)
 [![License: MIT](https://img.shields.io/badge/license-MIT-lightgrey?style=flat-square)](./LICENSE)
 [![Installs](https://img.shields.io/badge/dynamic/json?url=https%3A%2F%2Fabacus.jasoncameron.dev%2Fget%2Fvirojet-mod-menu%2Finstalls&query=%24.value&label=installs&color=2ea44f&style=flat-square)](#privacy)
 
@@ -55,6 +55,18 @@ The script turns on right away. A script with "theme" in its name goes in the **
 - **To update** a script you added from a link, press **Check for updates** in the footer. A card gets an **Update** button when the link has a newer version. Nothing is checked until you press it. You can also add the new version by hand: a script with the same name and namespace replaces the old one and keeps its saved settings.
 - **To remove** one, click **Remove** on its card, then **Remove it?** to confirm. This deletes its code and everything it saved.
 
+### Edit or copy a script
+
+Click **Edit** on a script you added. Its whole code opens in a wider editor.
+
+- **Copy** copies the whole script, including changes you haven't saved.
+- **Save** (or Ctrl+S) saves the code and starts it again if it's on. Its settings, on/off choice, group and original link stay the same, even if you change its name.
+- **Cancel** returns to the list. If you changed anything, press **Discard changes?** to confirm; Esc works the same way.
+
+Closing the menu keeps your current draft until you reload the page or edit another script. Open **Edit** on the same script to continue. A code error or failed storage write keeps the previous saved script. Updating a script from its original link replaces your edits.
+
+Scripts installed separately in Tampermonkey are edited in Tampermonkey; their cards have no Edit button here.
+
 ### What turning a script off does
 
 The menu runs the scripts you add, and keeps track of what each one does. Turning a script off:
@@ -78,7 +90,9 @@ Changes a script makes inside the game's own data, or saves in the game's storag
 They're saved in your browser's storage for the game site, not in Tampermonkey. So:
 - each game address (shellshock.io, algebra.best and so on) has its own list;
 - clearing the site's data removes them;
-- there's room for about 5 MB of scripts in all.
+- there is no fixed limit on the number of scripts. Code and downloaded files that exceed the menu's share of localStorage go into IndexedDB, which has a larger, browser-managed allowance. Available storage and disk space still apply.
+
+Scripts set to start with the page get priority in localStorage so they can run immediately. A script kept in IndexedDB waits for its code to be read back; a script that must change the game as it loads may start too late. Its card says when that happens. Keep scripts that need guaranteed early startup in Tampermonkey.
 
 ### What scripts get
 
@@ -156,6 +170,7 @@ If `enable()` or `disable()` throws, the card shows the error and the switch sta
 | `isEnabled(id)` / `setEnabled(id, on)` | Reads or changes a mod. |
 | `getTheme()` / `setTheme(id)` | The current theme id, or `"none"` for Game default. |
 | `addScript(source)` | Adds a script from a link or its code, and turns it on. Returns a promise of its id. |
+| `editScript(id, code)` | Saves changed code for an added script, keeping its id, settings, on/off choice, group and source link. Returns a promise of its id. |
 | `removeScript(id)` | Removes an added script and everything it saved. |
 | `list()` | Every mod with its id, name, group, version and state. Added scripts have `script: true`. |
 | `open()` / `close()` / `toggle()` | Shows or hides the menu. |
@@ -168,6 +183,11 @@ After each change the menu fires `ssmodmenu:change` on `window`, with `{ id, ena
 - **Scripts you add** are downloaded from the link you give, and **Check for updates** looks at that same link, only when you press it. They are kept in your browser.
 
 ## Changelog
+
+### 1.6.0 — 2026-10-29
+- **Edit and Copy:** each script you add has an Edit button, with its whole code, Copy, Save and confirmed discard. Save preserves its settings and on/off choice; Ctrl+S saves, and closing the menu keeps the current draft for this visit.
+- **More room for scripts:** overflow code and downloaded files use IndexedDB, removing the old shared localStorage bottleneck. Scripts that start with the page get priority in localStorage; overflow scripts that hook into loading show a timing note when they start late.
+- **Safer saves:** a storage failure preserves the previous script and its downloaded files. Overlapping saves finish in order, and removing a script cancels an unfinished save for it.
 
 ### 1.5.0 — 2026-10-26
 - **A look for the Gojo theme:** black glass over its wallpaper, in the theme's own black, white and gray, with white for what's on. A switch that is on has a dark knob, so it still shows against the white.

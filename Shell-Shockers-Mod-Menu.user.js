@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Shell Shockers Mod Menu
 // @namespace    https://github.com/Virojet
-// @version      1.6.0
+// @version      1.7.0
 // @description  One menu for your Shell Shockers mods. Add any userscript, switch themes and turn mods on or off without reloading.
 // @author       Virojet
 // @license      MIT
@@ -81,6 +81,9 @@
    site allows). What can't be undone live, like changes a script made to the game while the page loaded, is
    said on its card with a Reload button.
 
+   Export saves all of it in one file to give someone else: the scripts the menu runs, with their code, and a link to
+   install each mod Tampermonkey runs. Add script takes that file back and lists what's in it before adding anything.
+
    Mods it knows when Tampermonkey runs them: the Cherry Blossom, Blossom V4 and Fuji Dusk themes (switched by turning their
    stylesheets off and hiding what they add) and Better HUD (listed, with a shortcut to its MODS tab; its game
    patches load with the page, so it can't be switched off live).
@@ -93,14 +96,15 @@
      });
    The queue works whichever script Tampermonkey runs first. If the saved choice is "off", the menu calls
    disable() right away, before the first paint. Optional: version, defaultOn (false = starts off),
-   active (false = not applied yet), openSettings() (adds a Settings button), alwaysOn (listed, no switch).
+   active (false = not applied yet), openSettings() (adds a Settings button), alwaysOn (listed, no switch),
+   url (its .user.js link: Export puts it in the file, so whoever imports it can install it).
    window.ssModMenu has register, setEnabled, isEnabled, setTheme, list, addScript, editScript, removeScript, open and close;
    it fires "ssmodmenu:change" on window with { id, enabled } after each change. */
 (() => {
   "use strict";
   if (window.ssModMenu) return;
 
-  const VERSION = "1.6.0";
+  const VERSION = "1.7.0";
   // Saved before anything can wrap it: the menu's own record of page changes uses it.
   const NativeMO = window.MutationObserver;
   const STORE = "ssmm.v1";
@@ -127,6 +131,8 @@
   /* ---- Registry ---- */
   const mods = new Map();
   const ID_RE = /^[a-z0-9][a-z0-9._-]{0,47}$/i;
+  // A link to a .user.js file: the kind a script manager offers to install when it's opened.
+  const installLink = u => typeof u === "string" && /^https:\/\/[^\s/?#]+\/\S*\.user\.js(?:[?#]\S*)?$/i.test(u) ? u : "";
   const SCRIPT = Symbol("script");
   const emit = (type, detail) => window.dispatchEvent(new CustomEvent("ssmodmenu:" + type, { detail }));
   const wanted = m => m.alwaysOn || (m.group === "theme" ? state.theme === m.id : (state.on[m.id] ?? m.def.defaultOn !== false));
@@ -178,6 +184,7 @@
       group: def.group === "theme" ? "theme" : "mod",
       alwaysOn: !!def.alwaysOn,
       active: def.alwaysOn || def.active !== false,
+      url: installLink(def.url),
       error: "",
       // Scripts the menu runs: the saved script, its run while it's on, and what its card says about it.
       script: def[SCRIPT] || null, run: null, warn: "", note: "", reload: false,
@@ -1086,11 +1093,18 @@
   }
   const dataUrl = blob => new Promise((ok, no) => { const fr = new FileReader(); fr.onload = () => ok(fr.result); fr.onerror = () => no(fr.error); fr.readAsDataURL(blob); });
 
+  // Which saved script code belongs to: the same @name and @namespace, or the same code when it has no header.
+  const scriptKey = (meta, block, code) => hash(block ? meta.namespace + "\n" + (meta.name.slice(0, 120) || "Pasted script") : code);
   // Adds a script from a link or its code, or updates one already added (same @name and @namespace). It's
   // turned on right away.
   function addScript(source) {
     const since = removal;
     return changeScripts(() => saveScript(source, null, since));
+  }
+  // Adds a script from a file of mods (Export), as it was there: on or off, with the files it needs.
+  function addPacked(given) {
+    const since = removal;
+    return changeScripts(() => saveScript(given.code, null, since, given));
   }
   // Saves changed code for a script already added (the Edit view). It keeps its place: its settings, its on/off
   // choice, its group and the link it came from stay, whatever the new code calls itself. One that's on starts again.
@@ -1101,25 +1115,31 @@
       return s ? saveScript(code, s, since) : Promise.reject(new Error("That script isn't in the menu any more."));
     });
   }
-  async function saveScript(source, keep, since) {
-    let code = String(source ?? "").trim(), from = keep ? keep.from || "" : "";
+  // given: a script from a file of mods, which brings the files it needs, the link it came from, its group and whether
+  // it was on.
+  async function saveScript(source, keep, since, given) {
+    // One from a file of mods is kept exactly as it was saved there (a downloaded script keeps its last line break), so it
+    // matches the copy it came from.
+    let code = given ? given.code : String(source ?? "").trim(), from = keep ? keep.from || "" : given?.from || "";
     if (!code) throw new Error(keep ? "There's no code to save. Cancel keeps it as it was." : "Paste a link or a script first.");
-    if (!keep && /^https?:\/\/\S+$/i.test(code)) { from = code; code = await download(code); }
+    if (!keep && !given && /^https?:\/\/\S+$/i.test(code)) { from = code; code = await download(code); }
     if (!keep && /^\s*<(?:!doctype|html)/i.test(code)) throw new Error("That link opens a web page, not a script. Use the link to the .user.js file.");
     const { meta, block } = parseMeta(code);
     if (/^shell shockers mod menu$/i.test(meta.name)) throw new Error("That's the Mod Menu itself.");
     const name = meta.name.slice(0, 120) || "Pasted script";
-    const key = keep ? keep.key : hash(block ? meta.namespace + "\n" + name : code);
+    const key = keep ? keep.key : scriptKey(meta, block, code);
     await shelfRead;
     // An edit that leaves the @require and @resource lines as they were keeps the files already downloaded.
     const was = keep && parseMeta(files.get(codeKey(key)) || "").meta, same = (a, b) => JSON.stringify(a) === JSON.stringify(b);
     let lib = "";
-    if (was && same(was.require, meta.require)) lib = files.get(libKey(key)) || "";
+    if (given?.lib) lib = given.lib;
+    else if (was && same(was.require, meta.require)) lib = files.get(libKey(key)) || "";
     else for (const u of meta.require) {
       try { lib += (await download(u)) + "\n;\n"; } catch (err) { throw new Error(`Couldn't download ${fileName(u)}, a file it needs. ${err.message}`); }
     }
     let res = {};
-    if (was && same(was.resource, meta.resource)) { try { res = JSON.parse(files.get(resKey(key))) || {}; } catch { /* none */ } }
+    if (given && Object.keys(given.res).length) res = { ...given.res };
+    else if (was && same(was.resource, meta.resource)) { try { res = JSON.parse(files.get(resKey(key))) || {}; } catch { /* none */ } }
     else for (const line of meta.resource) {
       const [, rn, ru] = /^(\S+)\s+(\S+)/.exec(line) || [];
       if (!rn) continue;
@@ -1133,7 +1153,7 @@
     const s = {
       key, name, namespace: meta.namespace, version: meta.version.slice(0, 24), description: meta.description.slice(0, 300), author: meta.author,
       runAt: meta["run-at"] || "document-idle", match: meta.match, include: meta.include, exclude: meta.exclude, excludeMatch: meta["exclude-match"],
-      grant: meta.grant, group: keep ? keep.group : /theme/i.test(name) ? "theme" : "mod", from, meta: block.slice(0, 6000),
+      grant: meta.grant, group: keep ? keep.group : given?.group || (/theme/i.test(name) ? "theme" : "mod"), from, meta: block.slice(0, 6000),
     };
     const id = "us." + key, old = mods.get(id);
     const wasRemoved = () => (removedAt.get(id) || 0) > since;
@@ -1152,11 +1172,17 @@
     if (wasRemoved()) throw new Error("That script was removed while it was being saved.");
     scripts = list;
     if (old) mods.delete(id);
-    // An edited theme doesn't take over the way one installed this visit would.
-    if (keep) seenBefore.add(id);
+    // An edited theme doesn't take over the way one installed this visit would. One from a file of mods takes over only
+    // if it was on there, and a script that was already here keeps the choice made here.
+    const on = !given || given.on;
+    if (keep || (given && old)) seenBefore.add(id);
     else {
-      state.on[id] = true;
-      if (s.group === "theme") state.theme = id;
+      state.on[id] = on;
+      if (s.group === "theme" && on) state.theme = id;
+      else if (s.group === "theme") {
+        seenBefore.add(id);
+        state.theme ??= "none";
+      }
     }
     save();
     register(scriptDef(s));
@@ -1261,6 +1287,20 @@
       },
     },
   ];
+
+  // Where the published mods that Tampermonkey runs install from. Export puts these links in its file, because the menu
+  // can't read those mods' code. A mod that adds itself to the menu can give its own (url).
+  const RAW = "https://raw.githubusercontent.com/Virojet/";
+  const LINKS = {
+    "better-hud": RAW + "Shell-Shockers-Better-Hud-Mod/main/Shell-Shockers-Better-Hud.user.js",
+    "cherry-blossom": RAW + "Shell-Shockers-Cherry-Blossom-Theme/main/Shell-Shockers-Cherry-Blossom.user.js",
+    "blossom-v4": RAW + "Shell-Shockers-Blossom-V4-Theme/main/Shell-Shockers-Blossom-V4.user.js",
+    "gun-sounds": RAW + "Shell-Shockers-Gun-Sounds/main/Shell-Shockers-Gun-Sounds.user.js",
+    "stats-mod": RAW + "Shell-Shockers-Stats-Mod/main/Shell-Shockers-Stats-Mod.user.js",
+    "valorant-kill-sounds": RAW + "Shell-Shockers-Valorant-Kill-Sounds/main/Shell-Shockers-Valorant-Kill-Sounds.user.js",
+    "valorant-sensitivity": RAW + "Shell-Shockers-Valorant-Sensitivity/main/Shell-Shockers-Valorant-Sensitivity.user.js",
+  };
+  const linkOf = m => m.url || (Object.hasOwn(LINKS, m.id) ? LINKS[m.id] : "");
 
   // What a script the menu runs puts on the page is already on that script's card.
   const fromScript = node => [...live].some(r => r.owns(node));
@@ -1609,9 +1649,9 @@
       scrollbar-width: thin; scrollbar-color: color-mix(in srgb, var(--mm-ink) 35%, transparent) transparent;
     }
     /* Where there's more to scroll, the edge of the list fades out. */
-    .list.more-up { --ft: 1.6em; }
-    .list.more-down { --fb: 2.2em; }
-    .list.more-up, .list.more-down {
+    .list.more-up, .pack .cards.more-up { --ft: 1.6em; }
+    .list.more-down, .pack .cards.more-down { --fb: 2.2em; }
+    .list.more-up, .list.more-down, .pack .cards.more-up, .pack .cards.more-down {
       -webkit-mask-image: linear-gradient(transparent, #000 var(--ft), #000 calc(100% - var(--fb)), transparent);
       mask-image: linear-gradient(transparent, #000 var(--ft), #000 calc(100% - var(--fb)), transparent);
     }
@@ -1696,7 +1736,15 @@
     }
     .empty p { margin: 0; max-width: 26em; }
 
-    .add, .edit { min-height: 0; overflow-y: auto; }
+    .add, .pack, .edit { min-height: 0; overflow-y: auto; }
+    /* A long file of mods scrolls its rows, so the note above them and the buttons under them stay in view. */
+    .pack { display: flex; flex-direction: column; }
+    .pack .addbox { display: flex; flex-direction: column; min-height: 0; }
+    .pack .cards {
+      --ft: 0em; --fb: 0em;
+      grid-auto-rows: max-content; min-height: 6em; overflow-y: auto; overscroll-behavior: contain; margin: 0 -.5em 0 0; padding: .15em .5em .3em 0;
+      scrollbar-width: thin; scrollbar-color: color-mix(in srgb, var(--mm-ink) 35%, transparent) transparent;
+    }
     /* A script's code gets a wider panel and a box that doesn't wrap its lines. */
     .panel.wide { width: min(54em, calc(100vw - 32px)); }
     .edit textarea {
@@ -1737,13 +1785,16 @@
     }
     .panel.dropping .drop { opacity: 1; visibility: visible; }
 
+    /* When the buttons don't fit beside the version and some room for a message, they go on a row of their own. The
+       message's room doesn't depend on the message, so the buttons don't move when one shows. */
     footer {
-      display: flex; align-items: center; gap: .6em; margin-top: 1em; padding: .5em .5em .5em .875em;
+      display: flex; flex-wrap: wrap; align-items: center; gap: .45em .6em; margin-top: 1em; padding: .5em .5em .5em .875em;
       border: 1px solid var(--mm-edge); border-radius: 1em; background: var(--mm-bar); box-shadow: var(--mm-bar-shade);
       font-size: .875em; font-weight: 900;
     }
     .mmver { flex: none; }
-    .hint { flex: 1; min-width: 0; font-size: .9em; font-weight: 700; color: var(--mm-sub); }
+    .hint { flex: 1 1 8em; min-width: 0; font-size: .9em; font-weight: 700; color: var(--mm-sub); }
+    .tools { display: flex; flex-wrap: wrap; justify-content: flex-end; align-items: center; gap: .45em .6em; margin-left: auto; }
     .hint.warn { color: var(--mm-err); }
     .addbtn[aria-expanded="true"] { background-color: var(--mm-glass-on); border-color: var(--mm-edge-hi); }
     .key { padding-right: .35em; }
@@ -1782,6 +1833,7 @@
   let host, shadow, dialog, panel, listEl, themeGroup, modGroup, themeBox, modBox, countEl, emptyEl, keyBtn, keyCap, hintEl, toastEl, probe;
   let addView, addBtn, checkBtn, codeBox, addMsg, goBtn, pickBtn, launcher, toastTimer = 0, closing = 0, listening = false;
   let editView, editTitle, editIntro, editBox, editMsg, saveBtn, discardBtn, editing = "", draft = null, discarding = 0;
+  let packView, packIntro, packList, packMsg, packGo, packCancel, exportBtn, pack = null;
   let adding = false, busy = false, checking = false, removing = null, inputs = 0, dragDepth = 0;
   const motion = window.matchMedia?.("(prefers-reduced-motion: reduce)");
   const calm = () => !!motion?.matches;
@@ -1819,7 +1871,7 @@
           <section class="add" hidden>
             <h3 id="mm-add-title">Add a script</h3>
             <div class="addbox">
-              <p class="addnote">Paste a link to a .user.js file (raw GitHub, a GitHub file page or Greasy Fork), or the whole script. You can also drop the file here.</p>
+              <p class="addnote">Paste a link to a .user.js file (raw GitHub, a GitHub file page or Greasy Fork), or the whole script. You can also drop the file here. A mods file someone exported works the same way.</p>
               <textarea spellcheck="false" autocomplete="off" placeholder="https://…/my-script.user.js" aria-labelledby="mm-add-title"></textarea>
               <p class="addmsg" role="status"></p>
               <div class="addbar">
@@ -1829,7 +1881,20 @@
                 <button type="button" class="btn go" data-sound="" title="Ctrl+Enter">Add</button>
               </div>
             </div>
-            <input type="file" accept=".js,text/javascript,application/javascript" hidden>
+            <input type="file" accept=".js,.json,text/javascript,application/javascript,application/json" hidden>
+          </section>
+          <section class="pack" hidden>
+            <h3 id="mm-pack-title">Import mods</h3>
+            <div class="addbox">
+              <p class="addnote"></p>
+              <div class="cards" role="list" aria-labelledby="mm-pack-title"></div>
+              <p class="addmsg" role="status"></p>
+              <div class="addbar">
+                <span class="grow"></span>
+                <button type="button" class="btn quiet cancel" data-sound="ui_toggletab">Cancel</button>
+                <button type="button" class="btn go" data-sound=""></button>
+              </div>
+            </div>
           </section>
           <section class="edit" hidden>
             <h3 id="mm-edit-title">Edit script</h3>
@@ -1848,11 +1913,14 @@
           <footer>
             <span class="mmver">Mod Menu v${VERSION}</span>
             <span class="hint" role="status"></span>
-            <button type="button" class="btn checkbtn" data-sound="ui_toggletab" hidden>Check for updates</button>
-            <button type="button" class="btn addbtn" data-sound="ui_toggletab" aria-expanded="false">Add script</button>
-            <button type="button" class="btn key" title="Change the key that opens this menu">Hotkey <kbd></kbd></button>
+            <div class="tools">
+              <button type="button" class="btn checkbtn" data-sound="ui_toggletab" hidden>Check for updates</button>
+              <button type="button" class="btn exportbtn" title="Save all your mods in one file someone else can import" hidden>Export</button>
+              <button type="button" class="btn addbtn" data-sound="ui_toggletab" aria-expanded="false">Add script</button>
+              <button type="button" class="btn key" title="Change the key that opens this menu">Hotkey <kbd></kbd></button>
+            </div>
           </footer>
-          <div class="drop" aria-hidden="true">Drop the script to add it</div>
+          <div class="drop" aria-hidden="true">Drop the script or mods file to add it</div>
         </div>
       </dialog>
       <div class="toast" popover="manual" role="status"></div>
@@ -1887,6 +1955,14 @@
     editMsg = eq(".addmsg");
     saveBtn = eq(".go");
     discardBtn = eq(".cancel");
+    packView = q(".pack");
+    const pq = s => packView.querySelector(s);
+    packIntro = pq(".addnote");
+    packList = pq(".cards");
+    packMsg = pq(".addmsg");
+    packGo = pq(".go");
+    packCancel = pq(".cancel");
+    exportBtn = q(".exportbtn");
 
     // Keys pressed inside the open menu stay out of the game. Once it closes, they reach the game,
     // even while the browser hasn't moved focus out of the menu yet.
@@ -1913,6 +1989,7 @@
       dialog.classList.remove("out");
       stopListening();
       if (!busy) {
+        pack = null;
         showAdd(false);
         showEdit(null);
       }
@@ -1949,11 +2026,20 @@
       const d = e.target.closest?.(".desc");
       if (d) d.title = d.scrollHeight > d.clientHeight + 1 ? d.textContent : "";
     });
-    listEl.addEventListener("scroll", edges, { passive: true });
-    new ResizeObserver(edges).observe(listEl);
+    listEl.addEventListener("scroll", () => edges(), { passive: true });
+    new ResizeObserver(() => edges()).observe(listEl);
+    packList.addEventListener("scroll", () => edges(packList), { passive: true });
+    new ResizeObserver(() => edges(packList)).observe(packList);
 
     addBtn.addEventListener("click", () => showAdd(!adding));
     checkBtn.addEventListener("click", checkUpdates);
+    exportBtn.addEventListener("click", exportMods);
+    packGo.addEventListener("click", importPack);
+    packCancel.addEventListener("click", () => showPack(null));
+    packList.addEventListener("click", e => {
+      const b = e.target.closest?.("button[data-install]");
+      if (b) installClicked(pack?.rows[+b.dataset.install]);
+    });
     q(".cancel").addEventListener("click", () => showAdd(false));
     pickBtn.addEventListener("click", () => fileIn.click());
     fileIn.addEventListener("change", () => {
@@ -2103,6 +2189,7 @@
     if (!listEl || !dialog.open) return;
     const had = focusKey(shadow.activeElement), seen = new Set();
     checkBtn.hidden = !scripts.some(x => x.from);
+    exportBtn.hidden = !scripts.length && ![...mods.values()].some(m => !m.script && linkOf(m));
     const all = [...mods.values()], themes = all.filter(m => m.group === "theme"), others = all.filter(m => m.group !== "theme");
     const chosen = activeTheme()?.id || "none";
     // Cards go in again only when the order changed: moving one would cut its switch's slide short.
@@ -2121,9 +2208,9 @@
     if (had && focusKey(shadow.activeElement) !== had) [...listEl.querySelectorAll("input, button")].find(n => focusKey(n) === had)?.focus({ preventScroll: true });
     edges();
   }
-  // The list's edges fade where there's more to scroll.
-  function edges() {
-    const l = listEl, up = l.scrollTop > 1, down = l.scrollTop + l.clientHeight < l.scrollHeight - 1;
+  // The list's edges (or the Import view's rows') fade where there's more to scroll.
+  function edges(l = listEl) {
+    const up = l.scrollTop > 1, down = l.scrollTop + l.clientHeight < l.scrollHeight - 1;
     if (l.classList.contains("more-up") !== up) l.classList.toggle("more-up", up);
     if (l.classList.contains("more-down") !== down) l.classList.toggle("more-down", down);
   }
@@ -2198,7 +2285,7 @@
   function toggle() {
     dialog?.open && !closing ? close() : open();
   }
-  // Esc steps back first: out of choosing a key, then out of Add a script or Edit (as Cancel does there), then out of
+  // Esc steps back first: out of choosing a key, then out of Add a script, Import or Edit (as Cancel does there), then out of
   // the menu. Each sounds like the button that does the same.
   function back() {
     if (listening) {
@@ -2206,6 +2293,10 @@
       sound("ui_click");
     } else if (adding) {
       showAdd(false);
+      sound("ui_toggletab");
+    } else if (pack) {
+      if (busy) return;
+      showPack(null);
       sound("ui_toggletab");
     } else if (editing) cancelEdit();
     else close();
@@ -2274,10 +2365,11 @@
   }
 
   /* ---- Adding and removing scripts ---- */
-  // One view at a time where the list is: the list, Add a script, or a script's code.
+  // One view at a time where the list is: the list, Add a script, what a file of mods holds, or a script's code.
   function showViews() {
-    listEl.hidden = adding || !!editing;
+    listEl.hidden = adding || !!pack || !!editing;
     addView.hidden = !adding;
+    packView.hidden = !pack;
     editView.hidden = !editing;
     panel.classList.toggle("wide", !!editing);
   }
@@ -2285,7 +2377,10 @@
     const was = adding;
     adding = on;
     // Add takes the Edit view's place; what was typed there is kept for later.
-    if (on) editing = "";
+    if (on) {
+      editing = "";
+      pack = null;
+    }
     showViews();
     addBtn.setAttribute("aria-expanded", on);
     if (on) {
@@ -2306,8 +2401,9 @@
   }
   function setBusy(on) {
     busy = on;
-    goBtn.disabled = pickBtn.disabled = on;
+    goBtn.disabled = pickBtn.disabled = packGo.disabled = packCancel.disabled = on;
     goBtn.classList.toggle("busy", on);
+    packGo.classList.toggle("busy", on);
     saveBtn.classList.toggle("busy", on);
     saveBtn.disabled = on || !dirty();
     codeBox.readOnly = editBox.readOnly = on;
@@ -2319,6 +2415,15 @@
     codeBox.removeAttribute("aria-invalid");
     try {
       const text = typeof src === "string" ? src : await src.text(), link = typeof src === "string" && /^\s*https?:\/\/\S+\s*$/i.test(text);
+      // A file of mods from Export opens its own view, which lists what it holds before anything is added.
+      const p = readPack(text);
+      if (p) {
+        codeBox.value = "";
+        setBusy(false);
+        await showPack(p, typeof src === "string" ? "" : src.name);
+        sound("ui_toggletab");
+        return;
+      }
       addNote(typeof src !== "string" ? `Adding ${src.name}…` : link ? "Downloading…" : "Adding…");
       // Code or a file is added at once and only its result sounds. A download takes a moment, so it clicks first.
       if (link) sound("ui_click");
@@ -2410,6 +2515,194 @@
     }
   }
 
+  /* ---- Export and import ---- */
+  // Export saves one file to give someone else: each script the menu runs (its code, the files it @requires, its
+  // @resources, the link it came from and whether it's on) and, for each mod Tampermonkey runs, the link it installs
+  // from, as the menu can't read their code. What the mods saved, their settings, stays out of it. Add script takes the
+  // file back: the Import view lists what it holds, adds the scripts only when asked, and offers the rest to install.
+  const PACK = "ssModMenuMods", PACK_V = 1;
+  const plural = (n, word) => `${n} ${word}${n === 1 ? "" : "s"}`;
+  const hostOf = u => { try { return new URL(u).host; } catch { return u; } };
+  // A link clicked for the user: a file to save, or a page in a new tab.
+  const follow = (href, download) => {
+    const a = el("a");
+    a.href = href;
+    if (download) a.download = download;
+    else {
+      a.target = "_blank";
+      a.rel = "noopener noreferrer";
+    }
+    shadow.appendChild(a);
+    a.click();
+    a.remove();
+  };
+  async function exportMods() {
+    if (busy) return;
+    await shelfRead;
+    const list = [], install = [], left = [], theme = activeTheme()?.id;
+    for (const s of scripts) {
+      const id = "us." + s.key, code = files.get(codeKey(s.key));
+      if (code == null) { left.push(shortName(s.name)); continue; }
+      let res = {};
+      try { res = JSON.parse(files.get(resKey(s.key))) || {}; } catch { /* none */ }
+      list.push({
+        name: s.name, version: s.version, group: s.group, on: s.group === "theme" ? theme === id : state.on[id] !== false,
+        from: s.from || "", code, lib: files.get(libKey(s.key)) || "", res,
+      });
+    }
+    for (const m of mods.values()) {
+      if (m.script) continue;
+      const url = linkOf(m);
+      if (url) install.push({ id: m.id, name: m.name, version: m.version, url });
+      else left.push(m.name);
+    }
+    if (!list.length && !install.length) return toast("There's nothing to export yet.");
+    const d = new Date(), day = [d.getFullYear(), d.getMonth() + 1, d.getDate()].map(n => String(n).padStart(2, "0")).join("-");
+    const name = `shell-shockers-mods-${day}.json`, text = JSON.stringify({
+      [PACK]: PACK_V, about: "Shell Shockers mods exported from the Mod Menu. To import them, open the Mod Menu, press Add script and choose this file.",
+      menu: VERSION, exported: d.toISOString(), scripts: list, install,
+    }, null, 1);
+    const url = URL.createObjectURL(new Blob([text], { type: "application/json" }));
+    follow(url, name);
+    setTimeout(() => URL.revokeObjectURL(url), 60000);
+    const what = [list.length && plural(list.length, "script"), install.length && (install.length === 1 ? "a link to 1 mod" : `links to ${install.length} mods`)];
+    toast(`Saved ${what.filter(Boolean).join(" and ")} in ${name}. Settings aren't in it.` +
+      (left.length ? ` Left out, with no code or link to share: ${left.join(", ")}.` : ""), 8000);
+  }
+  // A file from Export, checked field by field, since it can come from anyone. null when the text isn't one.
+  function readPack(text) {
+    if (!/^\s*\{/.test(text)) return null;
+    let p;
+    try { p = JSON.parse(text); } catch { return null; }
+    if (!p || typeof p !== "object") return null;
+    if (!Object.hasOwn(p, PACK)) throw new Error("That file isn't a script, or mods exported from the Mod Menu.");
+    if (typeof p[PACK] === "number" && p[PACK] > PACK_V) throw new Error("Those mods were exported from a newer Mod Menu. Update yours, then try again.");
+    if (p[PACK] !== PACK_V) throw new Error("That mods file is damaged.");
+    const str = (v, n) => typeof v === "string" ? v.slice(0, n) : "";
+    const strings = o => o && typeof o === "object" && !Array.isArray(o) ? Object.fromEntries(Object.entries(o).filter(([, v]) => typeof v === "string")) : {};
+    const list = (Array.isArray(p.scripts) ? p.scripts : []).filter(x => x && typeof x.code === "string" && x.code.trim()).map(x => ({
+      code: x.code, on: x.on !== false, group: x.group === "theme" || x.group === "mod" ? x.group : "",
+      from: typeof x.from === "string" && /^https?:\/\/\S+$/i.test(x.from) ? x.from : "", lib: typeof x.lib === "string" ? x.lib : "", res: strings(x.res),
+    }));
+    const install = (Array.isArray(p.install) ? p.install : []).filter(x => x && installLink(x.url)).map(x => ({
+      id: ID_RE.test(String(x.id)) ? String(x.id) : "", name: str(x.name, 60) || fileName(x.url), version: str(x.version, 20), url: x.url,
+    }));
+    if (!list.length && !install.length) throw new Error("That mods file is empty.");
+    return { scripts: list, install, exported: Date.parse(p.exported) || 0 };
+  }
+  // The Import view: a row for each script, saying what adding it does, and for each mod to install with Tampermonkey.
+  async function showPack(p, label) {
+    const was = !!pack;
+    pack = null;
+    if (p) {
+      await shelfRead;
+      const all = [...mods.values()], same = (a, b) => a.toLowerCase() === b.toLowerCase(), rows = [], keys = new Set();
+      for (const x of p.scripts) {
+        const { meta, block } = parseMeta(x.code), key = scriptKey(meta, block, x.code);
+        if (keys.has(key)) continue;
+        keys.add(key);
+        const name = shortName(meta.name.slice(0, 120) || "Pasted script"), had = scripts.find(s => s.key === key);
+        const theme = (x.group || (/theme/i.test(meta.name) ? "theme" : "mod")) === "theme";
+        const r = { x, name, version: meta.version.slice(0, 24), todo: false, text: "" };
+        if (/^shell shockers mod menu$/i.test(meta.name)) r.text = "That's the Mod Menu itself, so it isn't added.";
+        else if (had && files.get(codeKey(key)) === x.code) r.text = "You have this one already.";
+        else if (had) {
+          r.todo = true;
+          r.text = `Its code differs from your copy${had.version ? `, v${had.version}` : ""}: adding it replaces yours.`;
+        } else if (all.some(m => !m.script && same(m.name, name))) r.text = "You have it already, from Tampermonkey.";
+        else {
+          r.todo = true;
+          r.text = theme ? (x.on ? "A theme. Adding it switches to it." : "A theme. It's added without switching to it.")
+            : x.on ? "It starts when you add it." : "It's added turned off, as it was there.";
+        }
+        rows.push(r);
+      }
+      for (const x of p.install) {
+        const have = (!!x.id && mods.has(x.id)) || all.some(m => same(m.name, x.name));
+        rows.push({ install: x, name: x.name, version: x.version, have,
+          text: have ? "You have it already." : `Runs in Tampermonkey. Install opens it from ${hostOf(x.url)}.` });
+      }
+      const when = p.exported ? new Date(p.exported).toLocaleDateString(undefined, { day: "numeric", month: "long", year: "numeric" }) : "";
+      packIntro.textContent = `${label || "Pasted mods"}${when ? `, exported ${when}` : ""}. Nothing is added until you press Add. Settings aren't in the file.`;
+      packMsg.textContent = "";
+      packMsg.classList.remove("warn");
+      pack = { rows };
+      adding = false;
+      editing = "";
+      addBtn.setAttribute("aria-expanded", false);
+    }
+    showViews();
+    if (pack) {
+      renderPack();
+      packView.scrollTop = packList.scrollTop = 0;
+      edges(packList);
+      packGo.focus({ preventScroll: true });
+    } else {
+      render();
+      if (!shadow.activeElement || packView.contains(shadow.activeElement)) addBtn.focus({ preventScroll: true });
+    }
+    if (was !== !!pack && dialog.open) reveal(pack ? packView : listEl);
+  }
+  function renderPack() {
+    const f = shadow.activeElement?.dataset?.install;
+    packList.replaceChildren(...pack.rows.map((r, i) => {
+      const c = el("div", "card fixed"), n = c.appendChild(el("span", "name", r.name));
+      c.setAttribute("role", "listitem");
+      if (r.version) n.appendChild(el("span", "ver", "v" + r.version));
+      c.appendChild(el("span", "desc" + (r.error ? " err" : ""), r.error || r.text));
+      if (r.install && !r.have) {
+        c.appendChild(el("span", "btns")).appendChild(button("", "Install", { install: i }, `Open ${r.install.url}`));
+        c.classList.add("has-btns");
+      }
+      return c;
+    }));
+    if (f != null) packList.querySelector(`[data-install="${f}"]`)?.focus({ preventScroll: true });
+    const n = pack.rows.filter(r => r.todo && !r.done).length;
+    packGo.textContent = n ? `Add ${plural(n, "script")}` : "Done";
+    packCancel.hidden = !n;
+  }
+  // Adds the scripts one after another. Each row then says how it went; Done goes back to the list.
+  async function importPack() {
+    if (busy || !pack) return;
+    const p = pack, todo = p.rows.filter(r => r.todo && !r.done);
+    if (!todo.length) {
+      showPack(null);
+      sound("ui_toggletab");
+      return;
+    }
+    setBusy(true);
+    packMsg.classList.remove("warn");
+    packMsg.textContent = "Adding…";
+    let added = 0;
+    for (const r of todo) {
+      try {
+        const m = mods.get(await addPacked(r.x));
+        r.text = m?.error || m?.warn ? "Added, but it ran into a problem. Its card says what." : "Added.";
+        added++;
+      } catch (err) {
+        r.error = (err && err.message) || String(err);
+      }
+      r.done = true;
+      if (pack === p) renderPack();
+    }
+    setBusy(false);
+    if (pack !== p) return;
+    renderPack();
+    const failed = todo.length - added;
+    packMsg.textContent = !failed ? `Added ${plural(added, "script")}.`
+      : `Added ${added} of ${todo.length}. ${failed === 1 ? "One couldn't be added: its row says" : "Some couldn't be added: their rows say"} why.`;
+    packMsg.classList.toggle("warn", failed > 0);
+    packGo.focus({ preventScroll: true });
+    sound(added ? "ui_playconfirm" : "ui_reset");
+  }
+  // A mod Tampermonkey runs opens from its link in a new tab, where Tampermonkey offers to install it.
+  function installClicked(r) {
+    if (!r?.install || r.have) return;
+    follow(r.install.url);
+    r.text = "Opened in a new tab. Install it there, then reload the game.";
+    renderPack();
+  }
+
   /* ---- Editing a script ---- */
   // Edit shows the whole saved code of a script the menu runs. Closing the menu keeps what was typed: Edit on the same
   // script brings it back, as long as its saved code hasn't changed since. A text box reads line breaks as \n, so the
@@ -2424,8 +2717,9 @@
     let kept = false;
     if (m) {
       adding = false;
+      pack = null;
       addBtn.setAttribute("aria-expanded", false);
-      kept = draft?.id === m.id && draft.saved === code && dirty();
+      kept =draft?.id === m.id && draft.saved === code && dirty();
       if (!kept) {
         draft = { id: m.id, saved: code, base: code.replace(/\r\n?/g, "\n") };
         editBox.value = code;

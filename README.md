@@ -8,7 +8,7 @@
 
 [![Install Mod Menu](https://img.shields.io/badge/Install_Mod_Menu-one_click-2ea44f?style=for-the-badge&logo=tampermonkey&logoColor=white)](https://raw.githubusercontent.com/Virojet/Shell-Shockers-Mod-Menu/main/Shell-Shockers-Mod-Menu.user.js)
 
-[![Version](https://img.shields.io/badge/version-1.6.0-0E7697?style=flat-square)](./Shell-Shockers-Mod-Menu.user.js)
+[![Version](https://img.shields.io/badge/version-1.7.0-0E7697?style=flat-square)](./Shell-Shockers-Mod-Menu.user.js)
 [![License: MIT](https://img.shields.io/badge/license-MIT-lightgrey?style=flat-square)](./LICENSE)
 [![Installs](https://img.shields.io/badge/dynamic/json?url=https%3A%2F%2Fabacus.jasoncameron.dev%2Fget%2Fvirojet-mod-menu%2Finstalls&query=%24.value&label=installs&color=2ea44f&style=flat-square)](#privacy)
 
@@ -66,6 +66,20 @@ Click **Edit** on a script you added. Its whole code opens in a wider editor.
 Closing the menu keeps your current draft until you reload the page or edit another script. Open **Edit** on the same script to continue. A code error or failed storage write keeps the previous saved script. Updating a script from its original link replaces your edits.
 
 Scripts installed separately in Tampermonkey are edited in Tampermonkey; their cards have no Edit button here.
+
+### Share your mods
+
+Click **Export** at the bottom of the menu. It saves one file, `shell-shockers-mods-<date>.json`, that you can send to someone else:
+- every script you added to the menu, with its whole code (your edits included), the files it needs, the link it came from, and whether it's on;
+- a link to each published mod that Tampermonkey runs for you (Better HUD, Gun Sounds, Stats Mod, Valorant Kill Sounds, Valorant Sensitivity, Cherry Blossom and Blossom V4), since the menu can't read their code. Mods with no public link are left out, and the message after Export names them.
+
+Settings aren't in the file: whoever imports it starts with each mod's defaults.
+
+**To import**, open **Add script** and choose the file (or drop it on the menu, or paste its text). The **Import mods** view lists what's in it before anything changes:
+- **Add** adds the scripts it lists, on or off as they were in the file. One you already have with the same code is left as it is; one whose code differs replaces your copy and keeps your on/off choice. One you already have from Tampermonkey is skipped.
+- **Install** on a Tampermonkey mod opens its link in a new tab, where Tampermonkey offers to install it. Reload the game afterwards.
+
+Only import files from people you trust: the scripts in it run like any script you add.
 
 ### What turning a script off does
 
@@ -158,6 +172,7 @@ Optional fields:
 | `active: false` | Your mod isn't applied yet, so the menu calls `enable()` if it should be on. |
 | `openSettings()` | Adds a **Settings** button to the card. Return `false` if your settings can't open right now. |
 | `alwaysOn: true` | Listed with no switch, for mods that can't be turned off live. |
+| `url` | Your script's `https://….user.js` link. **Export** puts it in the file, so whoever imports it can install your mod. |
 
 If `enable()` or `disable()` throws, the card shows the error and the switch stays where it really is.
 
@@ -181,8 +196,13 @@ After each change the menu fires `ssmodmenu:change` on `window`, with `{ id, ena
 
 - **Install count:** the first time it runs, one anonymous hit goes to a public counter ([Abacus](https://abacus.jasoncameron.dev)) so the installs badge above stays current. No settings, scripts, names or IDs. It's sent once per browser; the `ssmm-install-counted` key in site storage remembers it.
 - **Scripts you add** are downloaded from the link you give, and **Check for updates** looks at that same link, only when you press it. They are kept in your browser.
+- **Export** saves its file on your computer and sends nothing anywhere. Importing a file downloads nothing either, except a `@require` or `@resource` file it doesn't include; **Install** only opens the link it shows.
 
 ## Changelog
+
+### 1.7.0 — 2026-10-29
+- **Export and import your mods:** Export saves one file with every script you added (code, files, link, on/off) and install links for your Tampermonkey mods. Someone else chooses it under Add script, sees what's in it, and adds it in one click. Settings aren't included.
+- When the footer's buttons don't fit beside the version, they get a row of their own under it.
 
 ### 1.6.0 — 2026-10-29
 - **Edit and Copy:** each script you add has an Edit button, with its whole code, Copy, Save and confirmed discard. Save preserves its settings and on/off choice; Ctrl+S saves, and closing the menu keeps the current draft for this visit.

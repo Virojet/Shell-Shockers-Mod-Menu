@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Shell Shockers Mod Menu
 // @namespace    https://github.com/Virojet
-// @version      1.7.0
+// @version      1.7.1
 // @description  One menu for your Shell Shockers mods. Add any userscript, switch themes and turn mods on or off without reloading.
 // @author       Virojet
 // @license      MIT
@@ -104,7 +104,7 @@
   "use strict";
   if (window.ssModMenu) return;
 
-  const VERSION = "1.7.0";
+  const VERSION = "1.7.1";
   // Saved before anything can wrap it: the menu's own record of page changes uses it.
   const NativeMO = window.MutationObserver;
   const STORE = "ssmm.v1";
@@ -135,7 +135,29 @@
   const installLink = u => typeof u === "string" && /^https:\/\/[^\s/?#]+\/\S*\.user\.js(?:[?#]\S*)?$/i.test(u) ? u : "";
   const SCRIPT = Symbol("script");
   const emit = (type, detail) => window.dispatchEvent(new CustomEvent("ssmodmenu:" + type, { detail }));
-  const wanted = m => m.alwaysOn || (m.group === "theme" ? state.theme === m.id : (state.on[m.id] ?? m.def.defaultOn !== false));
+  // The same theme twice: added to the menu, and run by Tampermonkey too. Tampermonkey's copy starts with the page
+  // whatever the menu says, and a theme that finds itself already on the page doesn't start again, so the menu's copy
+  // would switch on to nothing. The two share one card, the menu's: picking it uses the copy Tampermonkey runs, and
+  // the menu's copy stays off.
+  const sameName = n => shortName(String(n)).replace(/\([^)]*\)/g, "").replace(/\btheme\b/gi, "").toLowerCase().replace(/[^a-z0-9]+/g, "");
+  const twinOf = m => {
+    if (m?.group !== "theme" || !m.script) return null;
+    const n = sameName(m.script.name);
+    for (const t of mods.values()) if (t.group === "theme" && !t.script && sameName(t.name) === n) return t;
+    return null;
+  };
+  const carrierOf = t => {
+    if (t?.group !== "theme" || t.script) return null;
+    for (const m of mods.values()) if (twinOf(m) === t) return m;
+    return null;
+  };
+  const cardOf = m => carrierOf(m) || m;
+  const picked = m => {
+    if (m.script && twinOf(m)) return false;
+    const c = carrierOf(m);
+    return state.theme === m.id || (!!c && state.theme === c.id);
+  };
+  const wanted = m => m.alwaysOn || (m.group === "theme" ? picked(m) : (state.on[m.id] ?? m.def.defaultOn !== false));
   const activeTheme = () => [...mods.values()].find(m => m.group === "theme" && m.active);
 
   function apply(m, on) {
@@ -150,7 +172,7 @@
       console.warn("[Mod Menu]", m.name, err);
       // The saved choice follows what actually happened, so a broken mod isn't retried on every change.
       if (m.group !== "theme") state.on[m.id] = m.active;
-      else if (on && state.theme === m.id) state.theme = "none";
+      else if (on && (state.theme === m.id || state.theme === carrierOf(m)?.id)) state.theme = "none";
       save();
     }
   }
@@ -207,7 +229,7 @@
   }
   function isEnabled(id) {
     const m = mods.get(id);
-    return !!m && m.active;
+    return !!m && (m.active || !!twinOf(m)?.active);
   }
   function setEnabled(id, on) {
     const m = mods.get(id);
@@ -1198,6 +1220,8 @@
   function removeScript(id) {
     const m = mods.get(id);
     if (!m?.script) return false;
+    // A theme Tampermonkey also runs keeps its look: its own card takes over.
+    const twin = twinOf(m);
     removedAt.set(id, ++removal);
     apply(m, false);
     pendingStart.delete(m);
@@ -1208,7 +1232,7 @@
     changeScripts(() => files.write(key, null, null, null, false, scripts))
       .catch(err => console.warn("[Mod Menu] Couldn't remove the saved files:", err));
     delete state.on[id];
-    if (state.theme === id) state.theme = "none";
+    if (state.theme === id) state.theme = twin ? twin.id : "none";
     state.seen = state.seen.filter(x => x !== id);
     save();
     mods.delete(id);
@@ -2143,7 +2167,10 @@
       if (m.version) k.name.appendChild(el("span", "ver", "v" + m.version));
       k.input?.setAttribute("aria-label", m.name);
     }
-    const problem = m.error || m.warn, text = problem || m.note || m.description, desc = (problem ? "!" : "") + text;
+    // A theme Tampermonkey runs too: the card says which copy it switches, and offers that copy's settings.
+    const twin = twinOf(m), own = twin || m;
+    const shared = twin && `Tampermonkey runs this theme too${twin.version ? ` (v${twin.version})` : ""}, so that copy is the one you see. To use this one, turn it off in Tampermonkey.`;
+    const problem = m.error || m.warn || twin?.error, text = problem || shared || m.note || m.description, desc = (problem ? "!" : "") + text;
     if (s.desc !== desc) {
       s.desc = desc;
       k.desc.textContent = text;
@@ -2151,14 +2178,14 @@
     }
     const btns = [];
     if (m.reload) btns.push(["", "Reload", "reload", "Reload the game"]);
-    if ((m.alwaysOn || m.active) && settingsOf(m)) btns.push(["", "Settings", "settings"]);
+    if ((own.alwaysOn || own.active) && settingsOf(own)) btns.push(["", "Settings", "settings", "", "", own.id]);
     if (m.script && updates.has(m.id)) btns.push(["", "Update", "update", `Update to version ${updates.get(m.id)}. Its settings are kept.`]);
     if (m.script) btns.push(["quiet", "Edit", "edit", "See its code, change it or copy it", "ui_toggletab"]);
     if (m.script) btns.push(removing?.id === m.id ?["danger", "Remove it?", "remove", "Click again to remove it and everything it saved", "ui_reset"] : ["quiet", "Remove", "remove"]);
     const bs = btns.join("|");
     if (s.btns !== bs) {
       s.btns = bs;
-      k.btns.replaceChildren(...btns.map(([cls, label, act, title, snd]) => button(cls, label, snd ? { [act]: m.id, sound: snd } : { [act]: m.id }, title)));
+      k.btns.replaceChildren(...btns.map(([cls, label, act, title, snd, of = m.id]) => button(cls, label, snd ? { [act]: of, sound: snd } : { [act]: of }, title)));
       c.classList.toggle("has-btns", btns.length > 0);
     }
     // Commands the script added with GM_registerMenuCommand.
@@ -2190,8 +2217,9 @@
     const had = focusKey(shadow.activeElement), seen = new Set();
     checkBtn.hidden = !scripts.some(x => x.from);
     exportBtn.hidden = !scripts.length && ![...mods.values()].some(m => !m.script && linkOf(m));
-    const all = [...mods.values()], themes = all.filter(m => m.group === "theme"), others = all.filter(m => m.group !== "theme");
-    const chosen = activeTheme()?.id || "none";
+    // A theme that is also added to the menu shows once, on the added copy's card.
+    const all = [...mods.values()], themes = all.filter(m => m.group === "theme" && !carrierOf(m)), others = all.filter(m => m.group !== "theme");
+    const chosen = cardOf(activeTheme())?.id || "none";
     // Cards go in again only when the order changed: moving one would cut its switch's slide short.
     const fill = (box, list) => {
       const nodes = list.map(([m, theme, on]) => (seen.add(m === NONE ? "" : m.id), card(m, theme, on)));
@@ -2539,7 +2567,7 @@
   async function exportMods() {
     if (busy) return;
     await shelfRead;
-    const list = [], install = [], left = [], theme = activeTheme()?.id;
+    const list = [], install = [], left = [], theme = cardOf(activeTheme())?.id;
     for (const s of scripts) {
       const id = "us." + s.key, code = files.get(codeKey(s.key));
       if (code == null) { left.push(shortName(s.name)); continue; }

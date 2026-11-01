@@ -8,7 +8,7 @@
 
 [![Install Mod Menu](https://img.shields.io/badge/Install_Mod_Menu-one_click-2ea44f?style=for-the-badge&logo=tampermonkey&logoColor=white)](https://raw.githubusercontent.com/Virojet/Shell-Shockers-Mod-Menu/main/Shell-Shockers-Mod-Menu.user.js)
 
-[![Version](https://img.shields.io/badge/version-1.7.0-0E7697?style=flat-square)](./Shell-Shockers-Mod-Menu.user.js)
+[![Version](https://img.shields.io/badge/version-1.7.1-0E7697?style=flat-square)](./Shell-Shockers-Mod-Menu.user.js)
 [![License: MIT](https://img.shields.io/badge/license-MIT-lightgrey?style=flat-square)](./LICENSE)
 [![Installs](https://img.shields.io/badge/dynamic/json?url=https%3A%2F%2Fabacus.jasoncameron.dev%2Fget%2Fvirojet-mod-menu%2Finstalls&query=%24.value&label=installs&color=2ea44f&style=flat-square)](#privacy)
 
@@ -141,6 +141,8 @@ Mods Tampermonkey runs show up here too:
 
 **Your choices are saved.** When you load the game again, a theme you turned off stays off from the first frame, with no flash. When you install a new theme, it takes over once; switch back any time.
 
+**A theme in Tampermonkey and in the menu** gets one card, the one you added. Tampermonkey's copy starts with the page whatever the menu says, so picking the card switches that copy, and the card says so. To use the copy you added instead, turn the theme off in Tampermonkey.
+
 > [!NOTE]
 > **Why Better HUD has no switch when Tampermonkey runs it:** it changes the game while the page loads, so turning it off needs a reload. Use its MODS tab to turn its parts on or off. To get a switch, turn it off in Tampermonkey and add it to the menu instead. Turning it off then still leaves some of its changes until you reload.
 
@@ -199,6 +201,9 @@ After each change the menu fires `ssmodmenu:change` on `window`, with `{ id, ena
 - **Export** saves its file on your computer and sends nothing anywhere. Importing a file downloads nothing either, except a `@require` or `@resource` file it doesn't include; **Install** only opens the link it shows.
 
 ## Changelog
+
+### 1.7.1 — 2026-11-01
+- **Fixed: picking a theme didn't change the look** when the same theme was both in Tampermonkey and added to the menu. The menu marked the added copy as on, but that copy found the theme already on the page and did nothing, so you saw the game's default look. The two now share one card, and picking it shows the theme.
 
 ### 1.7.0 — 2026-10-29
 - **Export and import your mods:** Export saves one file with every script you added (code, files, link, on/off) and install links for your Tampermonkey mods. Someone else chooses it under Add script, sees what's in it, and adds it in one click. Settings aren't included.
